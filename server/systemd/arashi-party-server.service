@@ -1,0 +1,15 @@
+[Unit]
+Description=Arashi party relay server
+After=network.target
+
+[Service]
+Type=simple
+User=arashi
+WorkingDirectory=/opt/arashi-party-server
+Environment=ARASHI_PARTY_PORT=8887
+ExecStart=/usr/bin/java -Xmx256m -jar /opt/arashi-party-server/arashi-party-server.jar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -160,6 +160,15 @@ public final class ArashiConfig {
 		data.lobbySearchedTextEnabled = enabled;
 	}
 
+	/** WebSocket URL of the party relay server, e.g. {@code ws://203.0.113.1:8887}. */
+	public String partyServerUrl() {
+		return data.partyServerUrl;
+	}
+
+	public void setPartyServerUrl(String url) {
+		data.partyServerUrl = url;
+	}
+
 	public void save() {
 		try {
 			Files.createDirectories(PATH.getParent());
@@ -184,6 +193,7 @@ public final class ArashiConfig {
 		boolean espEnabled = true;
 		boolean restrictToCrystalHollows = true;
 		boolean lobbySearchedTextEnabled = true;
+		String partyServerUrl = "";
 		Map<String, BlockColor> blockColors = new LinkedHashMap<>();
 	}
 

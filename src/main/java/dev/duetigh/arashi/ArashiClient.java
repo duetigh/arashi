@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.brigadier.arguments.StringArgumentType;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
@@ -36,12 +37,15 @@ import net.fabricmc.loader.api.FabricLoader;
 
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.gui.BlockSelectScreen;
+import dev.duetigh.arashi.gui.PartyScreen;
 import dev.duetigh.arashi.hypixel.HypixelWidgetReader;
 import dev.duetigh.arashi.hypixel.LobbyTracker;
+import dev.duetigh.arashi.party.PartyManager;
 import dev.duetigh.arashi.render.DebugHudRenderer;
 import dev.duetigh.arashi.render.EspRenderer;
 import dev.duetigh.arashi.render.LobbySearchedHudRenderer;
 import dev.duetigh.arashi.scanner.BlockScanner;
+import dev.duetigh.arashi.scanner.VeinMatch;
 import dev.duetigh.arashi.text.GradientText;
 import dev.duetigh.arashi.update.UpdateChecker;
 import dev.duetigh.arashi.util.BlockDisplay;
@@ -58,6 +62,7 @@ public final class ArashiClient implements ClientModInitializer {
 	private BlockScanner scanner;
 	private HypixelWidgetReader hypixelReader;
 	private LobbyTracker lobbyTracker;
+	private PartyManager party;
 	private KeyMapping openScannerKey;
 	private KeyMapping toggleEspKey;
 	private boolean hasSentJoinMessage;
@@ -71,6 +76,7 @@ public final class ArashiClient implements ClientModInitializer {
 		scanner.setNewMatchListener(this::onNewMatches);
 		hypixelReader = new HypixelWidgetReader();
 		lobbyTracker = new LobbyTracker();
+		party = new PartyManager(lobbyTracker);
 
 		new EspRenderer(scanner, config).register();
 		new DebugHudRenderer(scanner).register();
@@ -96,6 +102,11 @@ public final class ArashiClient implements ClientModInitializer {
 		registerKeyBinding();
 		registerCommand();
 		registerIncrementalRescan();
+		registerPartyListeners();
+
+		if (!config.partyServerUrl().isBlank()) {
+			party.connect(config.partyServerUrl());
+		}
 
 		UpdateChecker.checkAsync(info -> {
 			latestUpdate.set(info);
@@ -170,7 +181,70 @@ public final class ArashiClient implements ClientModInitializer {
 						.then(ClientCommands.literal("update").executes(context -> {
 							requestUpdateDownload();
 							return 1;
-						}))));
+						}))
+						.then(ClientCommands.literal("party")
+								.executes(context -> {
+									Minecraft client = Minecraft.getInstance();
+									client.execute(() -> client.setScreen(new PartyScreen(party)));
+									return 1;
+								})
+								.then(ClientCommands.literal("accept")
+										.then(ClientCommands.argument("inviteId", StringArgumentType.string())
+												.executes(context -> {
+													party.respondToInvite(StringArgumentType.getString(context, "inviteId"), true);
+													return 1;
+												})))
+								.then(ClientCommands.literal("decline")
+										.then(ClientCommands.argument("inviteId", StringArgumentType.string())
+												.executes(context -> {
+													party.respondToInvite(StringArgumentType.getString(context, "inviteId"), false);
+													return 1;
+												}))))));
+	}
+
+	private void registerPartyListeners() {
+		party.setOnInviteReceived(invite -> {
+			Minecraft client = Minecraft.getInstance();
+			if (client.player != null) {
+				client.player.sendSystemMessage(partyInviteMessage(invite));
+			}
+		});
+
+		party.setOnInviteResult(outcome -> {
+			Minecraft client = Minecraft.getInstance();
+			if (client.player == null) {
+				return;
+			}
+
+			String verb = outcome.accepted() ? "accepted"
+					: "EXPIRED".equals(outcome.reason()) ? "did not respond in time to"
+					: "declined";
+			client.player.sendSystemMessage(prefixed(outcome.targetUsername() + " " + verb + " your party invite."));
+		});
+
+		party.setOnKicked(() -> {
+			Minecraft client = Minecraft.getInstance();
+			if (client.player != null) {
+				client.player.sendSystemMessage(prefixed("You were removed from the party.").withStyle(ChatFormatting.RED));
+			}
+		});
+	}
+
+	private static MutableComponent partyInviteMessage(PartyManager.IncomingInvite invite) {
+		MutableComponent accept = Component.literal("[Accept]").withStyle(style -> style
+				.withColor(ChatFormatting.GREEN)
+				.withClickEvent(new ClickEvent.RunCommand("/arashi party accept " + invite.inviteId()))
+				.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to accept"))));
+		MutableComponent decline = Component.literal("[Decline]").withStyle(style -> style
+				.withColor(ChatFormatting.RED)
+				.withClickEvent(new ClickEvent.RunCommand("/arashi party decline " + invite.inviteId()))
+				.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to decline"))));
+
+		return Component.literal("[").append(GradientText.arashi())
+				.append(Component.literal("] " + invite.fromUsername() + " invited you to their party! "))
+				.append(accept)
+				.append(Component.literal(" "))
+				.append(decline);
 	}
 
 	private void requestUpdateDownload() {
@@ -209,7 +283,7 @@ public final class ArashiClient implements ClientModInitializer {
 				}));
 	}
 
-	private void onNewMatches(ClientLevel level, Map<Block, List<BlockPos>> newlyFound) {
+	private void onNewMatches(ClientLevel level, Map<Block, List<VeinMatch>> newVeins) {
 		if (!config.chatCoordsEnabled()) {
 			return;
 		}
@@ -221,16 +295,20 @@ public final class ArashiClient implements ClientModInitializer {
 				return;
 			}
 
-			for (Map.Entry<Block, List<BlockPos>> entry : newlyFound.entrySet()) {
+			for (Map.Entry<Block, List<VeinMatch>> entry : newVeins.entrySet()) {
 				client.player.sendSystemMessage(matchMessage(entry.getKey(), entry.getValue()));
 			}
 		});
 	}
 
-	private static MutableComponent matchMessage(Block block, List<BlockPos> positions) {
+	private static MutableComponent matchMessage(Block block, List<VeinMatch> veins) {
 		Identifier id = BuiltInRegistries.BLOCK.getKey(block);
-		String coords = positions.stream()
-				.map(pos -> "(" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")")
+		String coords = veins.stream()
+				.map(vein -> {
+					BlockPos pos = vein.center();
+					String coord = "(" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")";
+					return vein.size() > 1 ? coord + " x" + vein.size() : coord;
+				})
 				.collect(Collectors.joining(", "));
 
 		return prefixed(BlockDisplay.shortName(id) + " found at " + coords);

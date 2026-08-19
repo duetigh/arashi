@@ -1,0 +1,29 @@
+plugins {
+	id 'application'
+	id 'com.gradleup.shadow' version '8.3.5'
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.java-websocket:Java-WebSocket:1.5.7'
+	implementation 'com.google.code.gson:gson:2.11.0'
+}
+
+application {
+	mainClass = project.mainClass
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+// Single fat jar with a fixed name, so the systemd unit and deployment steps in
+// README.md never need to be updated when the version bumps.
+tasks.named('shadowJar') {
+	archiveBaseName = 'arashi-party-server'
+	archiveClassifier = ''
+	archiveVersion = ''
+}

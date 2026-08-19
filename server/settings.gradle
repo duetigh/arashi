@@ -1,0 +1,3 @@
+// Deliberately separate from the mod's root settings.gradle/Loom build - this is a
+// standalone relay server project, built and deployed independently of the Fabric mod.
+rootProject.name = 'arashi-party-server'

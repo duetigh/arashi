@@ -26,6 +26,7 @@ public final class BlockScanner {
 	private final Map<ChunkPos, Map<BlockPos, Block>> matchesByChunk = new ConcurrentHashMap<>();
 	private final Map<ChunkPos, Map<Block, Integer>> countsByChunk = new ConcurrentHashMap<>();
 	private final Map<ChunkPos, LevelChunk> loadedChunks = new ConcurrentHashMap<>();
+	private final Map<Block, Set<BlockPos>> announcedPositions = new ConcurrentHashMap<>();
 	private volatile Set<Block> trackedBlocks = Set.of();
 	private volatile List<BlockPos> matchesSnapshot = List.of();
 	private volatile Map<BlockPos, Block> matchesWithBlocksSnapshot = Map.of();
@@ -35,9 +36,9 @@ public final class BlockScanner {
 	private volatile boolean scanningSuppressed;
 	private volatile NewMatchListener newMatchListener;
 
-	/** Notified with positions that just entered tracking, grouped by block, so callers can e.g. announce them in chat. */
+	/** Notified with veins that just entered tracking, grouped by block, so callers can e.g. announce them in chat. */
 	public interface NewMatchListener {
-		void onNewMatches(ClientLevel level, Map<Block, List<BlockPos>> newlyFound);
+		void onNewMatches(ClientLevel level, Map<Block, List<VeinMatch>> newVeins);
 	}
 
 	public void setNewMatchListener(NewMatchListener listener) {
@@ -52,6 +53,7 @@ public final class BlockScanner {
 		}
 
 		this.trackedBlocks = resolved;
+		announcedPositions.clear();
 		rescanAllLoaded();
 	}
 
@@ -64,8 +66,19 @@ public final class BlockScanner {
 	public void onChunkUnload(LevelChunk chunk) {
 		ChunkPos key = chunk.getPos();
 		loadedChunks.remove(key);
-		matchesByChunk.remove(key);
+		Map<BlockPos, Block> removed = matchesByChunk.remove(key);
 		countsByChunk.remove(key);
+
+		if (removed != null) {
+			for (Map.Entry<BlockPos, Block> entry : removed.entrySet()) {
+				Set<BlockPos> announced = announcedPositions.get(entry.getValue());
+
+				if (announced != null) {
+					announced.remove(entry.getKey());
+				}
+			}
+		}
+
 		rebuildSnapshot();
 	}
 
@@ -73,6 +86,7 @@ public final class BlockScanner {
 		loadedChunks.clear();
 		matchesByChunk.clear();
 		countsByChunk.clear();
+		announcedPositions.clear();
 		rebuildSnapshot();
 	}
 
@@ -154,7 +168,6 @@ public final class BlockScanner {
 			return;
 		}
 
-		Map<BlockPos, Block> previous = matchesByChunk.getOrDefault(pos, Map.of());
 		Map<BlockPos, Block> found = new HashMap<>();
 		Map<Block, Integer> counts = new HashMap<>();
 		int minY = level.getMinY();
@@ -183,26 +196,45 @@ public final class BlockScanner {
 		}
 
 		rebuildSnapshot();
-		notifyNewMatches(level, previous, found);
+		detectNewVeins(level);
 	}
 
-	private void notifyNewMatches(ClientLevel level, Map<BlockPos, Block> previous, Map<BlockPos, Block> found) {
+	/**
+	 * Clusters the current global match set into veins (blocks touching or within a 1-block gap of
+	 * each other) and reports only clusters that don't overlap any previously announced vein. A vein
+	 * that grows after its first full scan is absorbed silently rather than re-announced.
+	 */
+	private void detectNewVeins(ClientLevel level) {
 		NewMatchListener listener = newMatchListener;
 
 		if (listener == null) {
 			return;
 		}
 
-		Map<Block, List<BlockPos>> newlyFound = new HashMap<>();
+		Map<Block, Set<BlockPos>> positionsByBlock = new HashMap<>();
 
-		for (Map.Entry<BlockPos, Block> entry : found.entrySet()) {
-			if (!previous.containsKey(entry.getKey())) {
-				newlyFound.computeIfAbsent(entry.getValue(), b -> new ArrayList<>()).add(entry.getKey());
+		for (Map.Entry<BlockPos, Block> entry : matchesWithBlocksSnapshot.entrySet()) {
+			positionsByBlock.computeIfAbsent(entry.getValue(), b -> new HashSet<>()).add(entry.getKey());
+		}
+
+		Map<Block, List<VeinMatch>> newVeins = new HashMap<>();
+
+		for (Map.Entry<Block, Set<BlockPos>> entry : positionsByBlock.entrySet()) {
+			Block block = entry.getKey();
+			Set<BlockPos> announced = announcedPositions.computeIfAbsent(block, b -> ConcurrentHashMap.newKeySet());
+
+			for (Set<BlockPos> cluster : VeinClusterer.cluster(entry.getValue())) {
+				boolean isNew = cluster.stream().noneMatch(announced::contains);
+				announced.addAll(cluster);
+
+				if (isNew) {
+					newVeins.computeIfAbsent(block, b -> new ArrayList<>()).add(VeinMatch.of(cluster));
+				}
 			}
 		}
 
-		if (!newlyFound.isEmpty()) {
-			listener.onNewMatches(level, newlyFound);
+		if (!newVeins.isEmpty()) {
+			listener.onNewMatches(level, newVeins);
 		}
 	}
 

@@ -8,6 +8,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -62,6 +63,7 @@ public final class EspRenderer {
 		Minecraft client = Minecraft.getInstance();
 		int renderDistanceBlocks = client.options.renderDistance().get() * 16;
 		Vec3 camera = context.levelState().cameraRenderState.pos;
+		Frustum frustum = context.levelState().cameraRenderState.cullFrustum;
 		float fillOpacity = config.fillOpacity();
 		float outlineOpacity = config.outlineOpacity();
 		int textureTint = withOpacity(0xFFFFFF, fillOpacity);
@@ -85,6 +87,11 @@ public final class EspRenderer {
 			}
 
 			AABB box = new AABB(pos);
+
+			if (!frustum.isVisible(box)) {
+				continue;
+			}
+
 			Block block = entry.getValue();
 			String blockId = idFor(block);
 

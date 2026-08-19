@@ -2,6 +2,7 @@ package dev.duetigh.arashi.hypixel;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Tracks which Hypixel lobby instances (keyed by the "Server:" widget value, e.g. "mini40B" - not
@@ -15,6 +16,7 @@ public final class LobbyTracker {
 	private final Set<String> visitedLobbies = new HashSet<>();
 	private String lastSeenLobby;
 	private long lobbySearchedAtMillis = -1L;
+	private Consumer<String> newLobbyListener;
 
 	public void onLobbyObserved(String lobbyId) {
 		if (lobbyId.equals(lastSeenLobby)) {
@@ -25,7 +27,19 @@ public final class LobbyTracker {
 
 		if (!visitedLobbies.add(lobbyId)) {
 			lobbySearchedAtMillis = System.currentTimeMillis();
+		} else if (newLobbyListener != null) {
+			newLobbyListener.accept(lobbyId);
 		}
+	}
+
+	/** Adds a lobby id reported by a party member, without flashing the local "searched" indicator for it. */
+	public void addKnownLobby(String lobbyId) {
+		visitedLobbies.add(lobbyId);
+	}
+
+	/** Fired with a lobby id only when {@link #onLobbyObserved} sees it for the first time locally. */
+	public void setNewLobbyListener(Consumer<String> listener) {
+		this.newLobbyListener = listener;
 	}
 
 	public boolean isShowingLobbySearched() {
