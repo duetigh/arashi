@@ -2,7 +2,6 @@ package dev.duetigh.arashi.gui;
 
 import java.util.List;
 
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSelectionList;
@@ -14,19 +13,25 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.scanner.BlockScanner;
+import dev.duetigh.arashi.util.BlockDisplay;
 
-/** Minimal, searchable multi-select list of every registered block, backed by {@link ArashiConfig}. */
+/** Searchable grid of every registered block's icon, backed by {@link ArashiConfig}. Click a block to toggle tracking it. */
 public final class BlockSelectScreen extends Screen {
+	private static final int CELL_SIZE = 24;
+	private static final int ICON_SIZE = 16;
+
 	private final ArashiConfig config;
 	private final BlockScanner scanner;
 	private final List<Identifier> allBlockIds;
 
 	private EditBox searchBox;
-	private BlockList list;
+	private BlockGrid grid;
+	private Button debugButton;
 
 	public BlockSelectScreen(ArashiConfig config, BlockScanner scanner) {
 		super(Component.literal("Arashi - Block Scanner"));
@@ -41,28 +46,43 @@ public final class BlockSelectScreen extends Screen {
 	@Override
 	protected void init() {
 		this.searchBox = this.addRenderableWidget(new EditBox(this.font, this.width / 2 - 100, 24, 200, 20, Component.literal("Search")));
-		this.searchBox.setResponder(query -> refresh(query));
+		this.searchBox.setResponder(this::refresh);
 
-		this.list = this.addRenderableOnly(new BlockList(this.minecraft, this.width, this.height - 80, 52, 20));
-		this.addWidget(this.list);
+		this.grid = this.addRenderableOnly(new BlockGrid(this.minecraft, this.width, this.height - 80, 52, CELL_SIZE));
+		this.addWidget(this.grid);
+
+		this.debugButton = this.addRenderableWidget(Button.builder(debugLabel(), b -> {
+			scanner.setDebugMode(!scanner.isDebugMode());
+			b.setMessage(debugLabel());
+		}).pos(this.width / 2 - 105, this.height - 26).size(100, 20).build());
 
 		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-				.pos(this.width / 2 - 50, this.height - 26)
+				.pos(this.width / 2 + 5, this.height - 26)
 				.size(100, 20)
 				.build());
 
 		refresh("");
 	}
 
+	private Component debugLabel() {
+		return Component.literal("Debug: " + (scanner.isDebugMode() ? "ON" : "OFF"));
+	}
+
 	private void refresh(String query) {
-		this.list.clear();
+		this.grid.clear();
 		String needle = query.strip().toLowerCase();
 
-		for (Identifier id : allBlockIds) {
-			if (needle.isEmpty() || id.toString().contains(needle)) {
-				this.list.addEntry(this.list.new BlockEntry(id));
-			}
+		List<Identifier> filtered = allBlockIds.stream()
+				.filter(id -> needle.isEmpty() || id.toString().contains(needle))
+				.toList();
+
+		int columns = Math.max(1, this.grid.getRowWidth() / CELL_SIZE);
+
+		for (int i = 0; i < filtered.size(); i += columns) {
+			this.grid.addEntry(this.grid.new BlockRow(filtered.subList(i, Math.min(i + columns, filtered.size()))));
 		}
+
+		this.grid.setScrollAmount(0);
 	}
 
 	@Override
@@ -78,13 +98,13 @@ public final class BlockSelectScreen extends Screen {
 		super.onClose();
 	}
 
-	private final class BlockList extends AbstractSelectionList<BlockList.BlockEntry> {
-		BlockList(Minecraft client, int width, int height, int top, int itemHeight) {
+	private final class BlockGrid extends AbstractSelectionList<BlockGrid.BlockRow> {
+		BlockGrid(Minecraft client, int width, int height, int top, int itemHeight) {
 			super(client, width, height, top, itemHeight);
 		}
 
 		@Override
-		public int addEntry(BlockEntry entry) {
+		public int addEntry(BlockRow entry) {
 			return super.addEntry(entry);
 		}
 
@@ -96,31 +116,56 @@ public final class BlockSelectScreen extends Screen {
 		protected void updateWidgetNarration(NarrationElementOutput output) {
 		}
 
-		final class BlockEntry extends AbstractSelectionList.Entry<BlockEntry> {
-			private final Identifier blockId;
-			private final Block block;
+		final class BlockRow extends AbstractSelectionList.Entry<BlockRow> {
+			private final List<Identifier> blockIds;
 
-			BlockEntry(Identifier blockId) {
-				this.blockId = blockId;
-				this.block = BuiltInRegistries.BLOCK.getValue(blockId);
+			BlockRow(List<Identifier> blockIds) {
+				this.blockIds = blockIds;
 			}
 
 			@Override
 			public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float tickDelta) {
-				boolean tracked = config.trackedBlockIds().contains(blockId.toString());
-				String checkbox = tracked ? "[x]" : "[ ]";
-				Component line = Component.literal(checkbox + " " + blockId)
-						.withStyle(tracked ? ChatFormatting.GREEN : ChatFormatting.GRAY);
-				graphics.text(BlockSelectScreen.this.font, line, getContentX() + 4, getContentY() + 4, 0xFFFFFFFF, false);
+				for (int i = 0; i < blockIds.size(); i++) {
+					Identifier blockId = blockIds.get(i);
+					Block block = BuiltInRegistries.BLOCK.getValue(blockId);
+					int x = getX() + i * CELL_SIZE;
+					int y = getY();
+					boolean tracked = config.trackedBlockIds().contains(blockId.toString());
+					boolean cellHovered = hovered && mouseX >= x && mouseX < x + CELL_SIZE
+							&& mouseY >= y && mouseY < y + getHeight();
+
+					if (cellHovered) {
+						graphics.fill(x, y, x + CELL_SIZE, y + getHeight(), 0x40FFFFFF);
+					}
+
+					if (block != null) {
+						graphics.item(new ItemStack(block.asItem()), x + (CELL_SIZE - ICON_SIZE) / 2, y + (getHeight() - ICON_SIZE) / 2);
+					}
+
+					if (tracked) {
+						int color = 0xFF55FF55;
+						graphics.fill(x, y, x + CELL_SIZE, y + 1, color);
+						graphics.fill(x, y + getHeight() - 1, x + CELL_SIZE, y + getHeight(), color);
+						graphics.fill(x, y, x + 1, y + getHeight(), color);
+						graphics.fill(x + CELL_SIZE - 1, y, x + CELL_SIZE, y + getHeight(), color);
+					}
+
+					if (cellHovered) {
+						graphics.setTooltipForNextFrame(BlockSelectScreen.this.font,
+								Component.literal(BlockDisplay.shortName(blockId)), mouseX, mouseY);
+					}
+				}
 			}
 
 			@Override
 			public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-				if (block == null) {
+				int index = (int) ((event.x() - getX()) / CELL_SIZE);
+
+				if (index < 0 || index >= blockIds.size()) {
 					return false;
 				}
 
-				config.toggle(blockId.toString());
+				config.toggle(blockIds.get(index).toString());
 				return true;
 			}
 		}

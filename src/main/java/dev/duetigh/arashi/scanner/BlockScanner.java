@@ -1,6 +1,7 @@
 package dev.duetigh.arashi.scanner;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -22,10 +23,13 @@ import net.minecraft.world.level.chunk.LevelChunk;
  */
 public final class BlockScanner {
 	private final Map<ChunkPos, Set<BlockPos>> matchesByChunk = new ConcurrentHashMap<>();
+	private final Map<ChunkPos, Map<Block, Integer>> countsByChunk = new ConcurrentHashMap<>();
 	private final Map<ChunkPos, LevelChunk> loadedChunks = new ConcurrentHashMap<>();
 	private volatile Set<Block> trackedBlocks = Set.of();
 	private volatile List<BlockPos> matchesSnapshot = List.of();
+	private volatile Map<ChunkPos, Map<Block, Integer>> countsSnapshot = Map.of();
 	private volatile ClientLevel currentLevel;
+	private volatile boolean debugMode;
 
 	public void setTrackedBlockIds(Collection<String> blockIds) {
 		Set<Block> resolved = new HashSet<>();
@@ -48,18 +52,33 @@ public final class BlockScanner {
 		ChunkPos key = chunk.getPos();
 		loadedChunks.remove(key);
 		matchesByChunk.remove(key);
+		countsByChunk.remove(key);
 		rebuildSnapshot();
 	}
 
 	public void clear() {
 		loadedChunks.clear();
 		matchesByChunk.clear();
+		countsByChunk.clear();
 		rebuildSnapshot();
+	}
+
+	public void setDebugMode(boolean enabled) {
+		this.debugMode = enabled;
+	}
+
+	public boolean isDebugMode() {
+		return debugMode;
 	}
 
 	/** Immutable snapshot of all currently tracked block positions, safe to read from the render thread. */
 	public List<BlockPos> matches() {
 		return matchesSnapshot;
+	}
+
+	/** Immutable snapshot of tracked-block counts per loaded chunk, safe to read from the render thread. */
+	public Map<ChunkPos, Map<Block, Integer>> debugCounts() {
+		return countsSnapshot;
 	}
 
 	/**
@@ -99,11 +118,13 @@ public final class BlockScanner {
 
 		if (trackedBlocks.isEmpty()) {
 			matchesByChunk.remove(pos);
+			countsByChunk.remove(pos);
 			rebuildSnapshot();
 			return;
 		}
 
 		Set<BlockPos> found = new HashSet<>();
+		Map<Block, Integer> counts = new HashMap<>();
 		int minY = level.getMinY();
 		int maxY = level.getMaxY();
 
@@ -111,9 +132,11 @@ public final class BlockScanner {
 			for (int z = pos.getMinBlockZ(); z <= pos.getMaxBlockZ(); z++) {
 				for (int y = minY; y < maxY; y++) {
 					BlockPos blockPos = new BlockPos(x, y, z);
+					Block block = chunk.getBlockState(blockPos).getBlock();
 
-					if (trackedBlocks.contains(chunk.getBlockState(blockPos).getBlock())) {
+					if (trackedBlocks.contains(block)) {
 						found.add(blockPos);
+						counts.merge(block, 1, Integer::sum);
 					}
 				}
 			}
@@ -121,8 +144,10 @@ public final class BlockScanner {
 
 		if (found.isEmpty()) {
 			matchesByChunk.remove(pos);
+			countsByChunk.remove(pos);
 		} else {
 			matchesByChunk.put(pos, found);
+			countsByChunk.put(pos, counts);
 		}
 
 		rebuildSnapshot();
@@ -133,5 +158,6 @@ public final class BlockScanner {
 				.flatMap(Set::stream)
 				.toList();
 		matchesSnapshot = all;
+		countsSnapshot = Map.copyOf(countsByChunk);
 	}
 }

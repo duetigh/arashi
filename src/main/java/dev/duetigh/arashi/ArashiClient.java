@@ -29,6 +29,7 @@ import net.fabricmc.loader.api.FabricLoader;
 
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.gui.BlockSelectScreen;
+import dev.duetigh.arashi.render.DebugHudRenderer;
 import dev.duetigh.arashi.render.EspRenderer;
 import dev.duetigh.arashi.scanner.BlockScanner;
 import dev.duetigh.arashi.text.GradientText;
@@ -53,6 +54,7 @@ public final class ArashiClient implements ClientModInitializer {
 		scanner.setTrackedBlockIds(config.trackedBlockIds());
 
 		new EspRenderer(scanner).register();
+		new DebugHudRenderer(scanner).register();
 
 		ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> scanner.onChunkLoad(level, chunk));
 		ClientChunkEvents.CHUNK_UNLOAD.register((level, chunk) -> scanner.onChunkUnload(chunk));
