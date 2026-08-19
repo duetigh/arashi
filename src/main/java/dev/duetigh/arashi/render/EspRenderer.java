@@ -1,14 +1,18 @@
 package dev.duetigh.arashi.render;
 
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.util.ARGB;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -19,13 +23,16 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 
 /**
- * Draws a translucent box and/or wireframe outline over every tracked block position. Uses
- * depth-test-disabled render types (see {@link EspRenderTypes}) so boxes stay visible through
- * terrain instead of being occluded like normal world geometry - that's the point of an ESP.
+ * Draws a translucent box, textured box, and/or wireframe outline over every tracked block
+ * position. Uses depth-test-disabled render types (see {@link EspRenderTypes}) so boxes stay
+ * visible through terrain instead of being occluded like normal world geometry - that's the
+ * point of an ESP.
  */
 public final class EspRenderer {
 	private final BlockScanner scanner;
 	private final ArashiConfig config;
+	private final Map<Block, TextureAtlasSprite> spriteCache = new HashMap<>();
+	private final Map<Block, String> blockIdCache = new HashMap<>();
 
 	public EspRenderer(BlockScanner scanner, ArashiConfig config) {
 		this.scanner = scanner;
@@ -37,21 +44,27 @@ public final class EspRenderer {
 	}
 
 	private void render(LevelRenderContext context) {
-		List<BlockPos> matches = scanner.matches();
+		if (!config.espEnabled()) {
+			return;
+		}
+
+		Map<BlockPos, Block> matches = scanner.matchesWithBlocks();
 
 		if (matches.isEmpty()) {
 			return;
 		}
 
 		EspMode mode = config.espMode();
-		boolean drawFill = mode != EspMode.OUTLINE;
-		boolean drawOutline = mode != EspMode.OVERLAY;
+		boolean drawColorFill = mode == EspMode.OVERLAY || mode == EspMode.BOTH;
+		boolean drawTextureFill = mode == EspMode.TEXTURE;
+		boolean drawOutline = mode == EspMode.OUTLINE || mode == EspMode.BOTH;
 
 		Minecraft client = Minecraft.getInstance();
 		int renderDistanceBlocks = client.options.renderDistance().get() * 16;
 		Vec3 camera = context.levelState().cameraRenderState.pos;
-		int fillColor = withOpacity(config.fillColor(), config.fillOpacity());
-		int outlineColor = withOpacity(config.outlineColor(), config.outlineOpacity());
+		float fillOpacity = config.fillOpacity();
+		float outlineOpacity = config.outlineOpacity();
+		int textureTint = withOpacity(0xFFFFFF, fillOpacity);
 		float outlineWidth = config.outlineWidth();
 
 		MultiBufferSource.BufferSource bufferSource = context.bufferSource();
@@ -60,26 +73,44 @@ public final class EspRenderer {
 		poseStack.translate(-camera.x, -camera.y, -camera.z);
 		PoseStack.Pose pose = poseStack.last();
 
-		VertexConsumer fillBuffer = drawFill ? bufferSource.getBuffer(EspRenderTypes.FILLED_BOX) : null;
+		VertexConsumer fillBuffer = drawColorFill ? bufferSource.getBuffer(EspRenderTypes.FILLED_BOX) : null;
+		VertexConsumer textureBuffer = drawTextureFill ? bufferSource.getBuffer(EspRenderTypes.TEXTURED_BOX) : null;
 		VertexConsumer outlineBuffer = drawOutline ? bufferSource.getBuffer(EspRenderTypes.LINES) : null;
 
-		for (BlockPos pos : matches) {
+		for (Map.Entry<BlockPos, Block> entry : matches.entrySet()) {
+			BlockPos pos = entry.getKey();
+
 			if (pos.distToCenterSqr(camera.x, camera.y, camera.z) > (double) renderDistanceBlocks * renderDistanceBlocks) {
 				continue;
 			}
 
 			AABB box = new AABB(pos);
+			Block block = entry.getValue();
+			String blockId = idFor(block);
 
 			if (fillBuffer != null) {
-				drawFilledBox(pose, fillBuffer, box, fillColor);
+				drawFilledBox(pose, fillBuffer, box, withOpacity(config.fillColorFor(blockId), fillOpacity));
+			}
+
+			if (textureBuffer != null) {
+				drawTexturedBox(pose, textureBuffer, box, spriteFor(block), textureTint);
 			}
 
 			if (outlineBuffer != null) {
-				drawLineBox(pose, outlineBuffer, box, outlineColor, outlineWidth);
+				drawLineBox(pose, outlineBuffer, box, withOpacity(config.outlineColorFor(blockId), outlineOpacity), outlineWidth);
 			}
 		}
 
 		poseStack.popPose();
+	}
+
+	private TextureAtlasSprite spriteFor(Block block) {
+		return spriteCache.computeIfAbsent(block, b -> Minecraft.getInstance().getModelManager()
+				.getBlockStateModelSet().getParticleMaterial(b.defaultBlockState()).sprite());
+	}
+
+	private String idFor(Block block) {
+		return blockIdCache.computeIfAbsent(block, b -> BuiltInRegistries.BLOCK.getKey(b).toString());
 	}
 
 	private static int withOpacity(int rgb, float alpha) {
@@ -122,6 +153,48 @@ public final class EspRenderer {
 		buffer.addVertex(pose, (float) box.minX, (float) box.minY, (float) box.minZ).setColor(color);
 		buffer.addVertex(pose, (float) box.maxX, (float) box.minY, (float) box.minZ).setColor(color);
 		buffer.addVertex(pose, (float) box.maxX, (float) box.minY, (float) box.maxZ).setColor(color);
+	}
+
+	// Every face below cycles its 4 corners in the same "low, up, up-across, low-across" order as
+	// drawFilledBox, so the same 4-corner UV cycle (bottom-left, top-left, top-right, bottom-right
+	// of the sprite) tiles correctly on all 6 faces without per-face UV bookkeeping.
+	private static void drawTexturedBox(PoseStack.Pose pose, VertexConsumer buffer, AABB box, TextureAtlasSprite sprite, int color) {
+		float u0 = sprite.getU0(), u1 = sprite.getU1(), v0 = sprite.getV0(), v1 = sprite.getV1();
+
+		// Front (-Z)
+		texVertex(pose, buffer, (float) box.minX, (float) box.minY, (float) box.minZ, u0, v1, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.maxY, (float) box.minZ, u0, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.maxY, (float) box.minZ, u1, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.minY, (float) box.minZ, u1, v1, color);
+		// Back (+Z)
+		texVertex(pose, buffer, (float) box.maxX, (float) box.minY, (float) box.maxZ, u0, v1, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.maxY, (float) box.maxZ, u0, v0, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.maxY, (float) box.maxZ, u1, v0, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.minY, (float) box.maxZ, u1, v1, color);
+		// Left (-X)
+		texVertex(pose, buffer, (float) box.minX, (float) box.minY, (float) box.maxZ, u0, v1, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.maxY, (float) box.maxZ, u0, v0, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.maxY, (float) box.minZ, u1, v0, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.minY, (float) box.minZ, u1, v1, color);
+		// Right (+X)
+		texVertex(pose, buffer, (float) box.maxX, (float) box.minY, (float) box.minZ, u0, v1, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.maxY, (float) box.minZ, u0, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.maxY, (float) box.maxZ, u1, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.minY, (float) box.maxZ, u1, v1, color);
+		// Top (+Y)
+		texVertex(pose, buffer, (float) box.minX, (float) box.maxY, (float) box.minZ, u0, v1, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.maxY, (float) box.maxZ, u0, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.maxY, (float) box.maxZ, u1, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.maxY, (float) box.minZ, u1, v1, color);
+		// Bottom (-Y)
+		texVertex(pose, buffer, (float) box.minX, (float) box.minY, (float) box.maxZ, u0, v1, color);
+		texVertex(pose, buffer, (float) box.minX, (float) box.minY, (float) box.minZ, u0, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.minY, (float) box.minZ, u1, v0, color);
+		texVertex(pose, buffer, (float) box.maxX, (float) box.minY, (float) box.maxZ, u1, v1, color);
+	}
+
+	private static void texVertex(PoseStack.Pose pose, VertexConsumer buffer, float x, float y, float z, float u, float v, int color) {
+		buffer.addVertex(pose, x, y, z).setUv(u, v).setColor(color);
 	}
 
 	private static void drawLineBox(PoseStack.Pose pose, VertexConsumer buffer, AABB box, int color, float width) {

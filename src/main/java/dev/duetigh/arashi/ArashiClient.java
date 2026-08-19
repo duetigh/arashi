@@ -36,8 +36,11 @@ import net.fabricmc.loader.api.FabricLoader;
 
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.gui.BlockSelectScreen;
+import dev.duetigh.arashi.hypixel.HypixelWidgetReader;
+import dev.duetigh.arashi.hypixel.LobbyTracker;
 import dev.duetigh.arashi.render.DebugHudRenderer;
 import dev.duetigh.arashi.render.EspRenderer;
+import dev.duetigh.arashi.render.LobbySearchedHudRenderer;
 import dev.duetigh.arashi.scanner.BlockScanner;
 import dev.duetigh.arashi.text.GradientText;
 import dev.duetigh.arashi.update.UpdateChecker;
@@ -53,7 +56,12 @@ public final class ArashiClient implements ClientModInitializer {
 
 	private ArashiConfig config;
 	private BlockScanner scanner;
+	private HypixelWidgetReader hypixelReader;
+	private LobbyTracker lobbyTracker;
 	private KeyMapping openScannerKey;
+	private KeyMapping toggleEspKey;
+	private boolean hasSentJoinMessage;
+	private boolean scanningSuppressed;
 
 	@Override
 	public void onInitializeClient() {
@@ -61,15 +69,23 @@ public final class ArashiClient implements ClientModInitializer {
 		scanner = new BlockScanner();
 		scanner.setTrackedBlockIds(config.trackedBlockIds());
 		scanner.setNewMatchListener(this::onNewMatches);
+		hypixelReader = new HypixelWidgetReader();
+		lobbyTracker = new LobbyTracker();
 
 		new EspRenderer(scanner, config).register();
 		new DebugHudRenderer(scanner).register();
+		new LobbySearchedHudRenderer(config, lobbyTracker).register();
 
 		ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> scanner.onChunkLoad(level, chunk));
 		ClientChunkEvents.CHUNK_UNLOAD.register((level, chunk) -> scanner.onChunkUnload(chunk));
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
 			scanner.clear();
-			client.player.sendSystemMessage(joinMessage());
+
+			if (!hasSentJoinMessage) {
+				client.player.sendSystemMessage(joinMessage());
+				hasSentJoinMessage = true;
+			}
+
 			UpdateChecker.UpdateInfo pending = pendingUpdate.getAndSet(null);
 
 			if (pending != null) {
@@ -97,10 +113,17 @@ public final class ArashiClient implements ClientModInitializer {
 		KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "main"));
 		openScannerKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
 				"key.arashi.open_scanner", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, category));
+		toggleEspKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+				"key.arashi.toggle_esp", InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), category));
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (openScannerKey.consumeClick()) {
-				client.setScreen(new BlockSelectScreen(config, scanner));
+				client.setScreen(new BlockSelectScreen(config, scanner, openScannerKey, toggleEspKey));
+			}
+
+			while (toggleEspKey.consumeClick()) {
+				config.setEspEnabled(!config.espEnabled());
+				config.save();
 			}
 		});
 	}
@@ -110,12 +133,28 @@ public final class ArashiClient implements ClientModInitializer {
 		// already-loaded chunk (mining/building) are picked up by throttled polling of just the
 		// chunk the player stands in, rather than a full-area rescan every tick.
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
-			if (client.player == null) {
+			if (client.player == null || client.level == null) {
 				return;
 			}
 
 			if (client.player.tickCount % 20 == 0) {
 				scanner.rescanChunkAt(client.player.blockPosition());
+
+				hypixelReader.tick(client.level);
+				hypixelReader.lobbyId().ifPresent(lobbyTracker::onLobbyObserved);
+
+				boolean shouldSuppress = config.restrictToCrystalHollows()
+						&& hypixelReader.isConnectedToHypixel()
+						&& !hypixelReader.isInCrystalHollowsStable();
+
+				if (shouldSuppress != scanningSuppressed) {
+					scanningSuppressed = shouldSuppress;
+					scanner.setScanningSuppressed(shouldSuppress);
+
+					if (!shouldSuppress) {
+						scanner.setTrackedBlockIds(config.trackedBlockIds());
+					}
+				}
 			}
 		});
 	}
@@ -125,7 +164,7 @@ public final class ArashiClient implements ClientModInitializer {
 				ClientCommands.literal("arashi")
 						.executes(context -> {
 							Minecraft client = Minecraft.getInstance();
-							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner)));
+							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner, openScannerKey, toggleEspKey)));
 							return 1;
 						})
 						.then(ClientCommands.literal("update").executes(context -> {
@@ -198,20 +237,23 @@ public final class ArashiClient implements ClientModInitializer {
 	}
 
 	private static MutableComponent joinMessage() {
-		return Component.literal("[").append(GradientText.arashi()).append(Component.literal("] Mod loaded."));
+		return Component.literal("[").append(GradientText.arashi())
+				.append(Component.literal("] Mod loaded. (" + currentVersion() + ")"));
 	}
 
 	private static MutableComponent prefixed(String message) {
 		return Component.literal("[").append(GradientText.arashi()).append(Component.literal("] " + message));
 	}
 
-	private static MutableComponent updateMessage(UpdateChecker.UpdateInfo info) {
-		String currentVersion = FabricLoader.getInstance()
+	private static String currentVersion() {
+		return FabricLoader.getInstance()
 				.getModContainer(MOD_ID)
 				.map(mod -> mod.getMetadata().getVersion().getFriendlyString())
 				.orElse("?");
+	}
 
-		MutableComponent versionText = Component.literal(currentVersion + " -> " + info.version());
+	private static MutableComponent updateMessage(UpdateChecker.UpdateInfo info) {
+		MutableComponent versionText = Component.literal(currentVersion() + " -> " + info.version());
 
 		if (info.downloadUrl() != null) {
 			versionText = versionText.withStyle(style -> style

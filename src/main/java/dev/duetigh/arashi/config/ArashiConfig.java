@@ -6,7 +6,9 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 
 import com.google.gson.Gson;
@@ -74,22 +76,28 @@ public final class ArashiConfig {
 		data.espMode = mode.name();
 	}
 
-	/** Outline color, packed as 0xRRGGBB. */
-	public int outlineColor() {
-		return data.outlineColor;
+	/** Outline color for a tracked block, packed as 0xRRGGBB. Falls back to the default color if the block has no override. */
+	public int outlineColorFor(String blockId) {
+		BlockColor override = data.blockColors.get(blockId);
+		return override != null ? override.outlineColor : data.outlineColor;
 	}
 
-	public void setOutlineColor(int rgb) {
-		data.outlineColor = rgb & 0xFFFFFF;
+	public void setOutlineColorFor(String blockId, int rgb) {
+		blockColorFor(blockId).outlineColor = rgb & 0xFFFFFF;
 	}
 
-	/** Fill color, packed as 0xRRGGBB. */
-	public int fillColor() {
-		return data.fillColor;
+	/** Fill color for a tracked block, packed as 0xRRGGBB. Falls back to the default color if the block has no override. */
+	public int fillColorFor(String blockId) {
+		BlockColor override = data.blockColors.get(blockId);
+		return override != null ? override.fillColor : data.fillColor;
 	}
 
-	public void setFillColor(int rgb) {
-		data.fillColor = rgb & 0xFFFFFF;
+	public void setFillColorFor(String blockId, int rgb) {
+		blockColorFor(blockId).fillColor = rgb & 0xFFFFFF;
+	}
+
+	private BlockColor blockColorFor(String blockId) {
+		return data.blockColors.computeIfAbsent(blockId, id -> new BlockColor(data.outlineColor, data.fillColor));
 	}
 
 	/** Outline width in pixels. */
@@ -127,6 +135,31 @@ public final class ArashiConfig {
 		data.chatCoordsEnabled = enabled;
 	}
 
+	public boolean espEnabled() {
+		return data.espEnabled;
+	}
+
+	public void setEspEnabled(boolean enabled) {
+		data.espEnabled = enabled;
+	}
+
+	/** Whether ESP scanning is restricted to Crystal Hollows while connected to Hypixel. */
+	public boolean restrictToCrystalHollows() {
+		return data.restrictToCrystalHollows;
+	}
+
+	public void setRestrictToCrystalHollows(boolean enabled) {
+		data.restrictToCrystalHollows = enabled;
+	}
+
+	public boolean lobbySearchedTextEnabled() {
+		return data.lobbySearchedTextEnabled;
+	}
+
+	public void setLobbySearchedTextEnabled(boolean enabled) {
+		data.lobbySearchedTextEnabled = enabled;
+	}
+
 	public void save() {
 		try {
 			Files.createDirectories(PATH.getParent());
@@ -148,5 +181,20 @@ public final class ArashiConfig {
 		float fillOpacity = 0.45f;
 		float outlineOpacity = 1.0f;
 		boolean chatCoordsEnabled = false;
+		boolean espEnabled = true;
+		boolean restrictToCrystalHollows = true;
+		boolean lobbySearchedTextEnabled = true;
+		Map<String, BlockColor> blockColors = new LinkedHashMap<>();
+	}
+
+	/** Per-block outline/fill color override, packed as 0xRRGGBB. */
+	private static final class BlockColor {
+		int outlineColor;
+		int fillColor;
+
+		BlockColor(int outlineColor, int fillColor) {
+			this.outlineColor = outlineColor;
+			this.fillColor = fillColor;
+		}
 	}
 }

@@ -1,11 +1,15 @@
 package dev.duetigh.arashi.gui;
 
 import java.util.List;
+import java.util.function.IntConsumer;
+import java.util.function.IntSupplier;
 
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSelectionList;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.gui.screens.Screen;
@@ -20,23 +24,55 @@ import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.scanner.BlockScanner;
 import dev.duetigh.arashi.util.BlockDisplay;
 
-/** Searchable grid of every registered block's icon, backed by {@link ArashiConfig}. Click a block to toggle tracking it. */
+/**
+ * Searchable grid of every registered block's icon, backed by {@link ArashiConfig}. Double-click a
+ * block to toggle tracking it; single-click a tracked block to open a side panel for its individual
+ * ESP colors. The view can be filtered to show all blocks, only selected ones, or only unselected ones.
+ */
 public final class BlockSelectScreen extends Screen {
 	private static final int CELL_SIZE = 24;
 	private static final int ICON_SIZE = 16;
+	private static final int SEARCH_WIDTH = 200;
+	private static final int TOP_ROW_GAP = 8;
+	private static final int VIEW_BUTTON_WIDTH = 110;
+
+	private static final int PANEL_WIDTH = 176;
+	private static final int PANEL_PADDING = 8;
+	private static final int PANEL_TOP = 48;
+	private static final int PANEL_WIDGET_WIDTH = 160;
+	private static final int PANEL_WIDGET_HEIGHT = 20;
+	private static final int PANEL_SLIDER_WIDTH = 120;
+	private static final int PANEL_SWATCH_GAP = 4;
+	private static final int PANEL_SWATCH_WIDTH = PANEL_WIDGET_WIDTH - PANEL_SLIDER_WIDTH - PANEL_SWATCH_GAP;
+	private static final int PANEL_SPACING = 22;
 
 	private final ArashiConfig config;
 	private final BlockScanner scanner;
+	private final KeyMapping openScannerKey;
+	private final KeyMapping toggleEspKey;
 	private final List<Identifier> allBlockIds;
+
+	private ViewMode viewMode = ViewMode.ALL;
+	private String searchQuery = "";
+	private Identifier editingBlockId;
 
 	private EditBox searchBox;
 	private BlockGrid grid;
 	private Button debugButton;
 
-	public BlockSelectScreen(ArashiConfig config, BlockScanner scanner) {
+	private int outlineSwatchX;
+	private int outlineSwatchY;
+	private int fillSwatchX;
+	private int fillSwatchY;
+	private int panelSwatchHeight;
+	private int panelBottom;
+
+	public BlockSelectScreen(ArashiConfig config, BlockScanner scanner, KeyMapping openScannerKey, KeyMapping toggleEspKey) {
 		super(Component.literal("Arashi - Block Scanner"));
 		this.config = config;
 		this.scanner = scanner;
+		this.openScannerKey = openScannerKey;
+		this.toggleEspKey = toggleEspKey;
 		this.allBlockIds = BuiltInRegistries.BLOCK.stream()
 				.map(BuiltInRegistries.BLOCK::getKey)
 				.sorted()
@@ -45,17 +81,36 @@ public final class BlockSelectScreen extends Screen {
 
 	@Override
 	protected void init() {
-		this.searchBox = this.addRenderableWidget(new EditBox(this.font, this.width / 2 - 100, 24, 200, 20, Component.literal("Search")));
-		this.searchBox.setResponder(this::refresh);
+		boolean panelOpen = editingBlockId != null;
+		int gridWidth = panelOpen ? this.width - PANEL_WIDTH : this.width;
 
-		this.grid = this.addRenderableOnly(new BlockGrid(this.minecraft, this.width, this.height - 80, 52, CELL_SIZE));
+		int topRowWidth = SEARCH_WIDTH + TOP_ROW_GAP + VIEW_BUTTON_WIDTH;
+		int topRowX = this.width / 2 - topRowWidth / 2;
+
+		this.searchBox = this.addRenderableWidget(new EditBox(this.font, topRowX, 24, SEARCH_WIDTH, 20, Component.literal("Search")));
+		this.searchBox.setValue(searchQuery);
+		this.searchBox.setResponder(query -> {
+			searchQuery = query;
+			refresh(query);
+		});
+
+		this.addRenderableWidget(CycleButton.builder((ViewMode mode) -> Component.literal(viewModeLabel(mode)), viewMode)
+				.withValues(ViewMode.values())
+				.displayOnlyValue()
+				.create(topRowX + SEARCH_WIDTH + TOP_ROW_GAP, 24, VIEW_BUTTON_WIDTH, 20, Component.empty(),
+						(button, mode) -> {
+							viewMode = mode;
+							refresh(searchQuery);
+						}));
+
+		this.grid = this.addRenderableOnly(new BlockGrid(this.minecraft, gridWidth, this.height - 80, 52, CELL_SIZE));
 		this.addWidget(this.grid);
 
 		int buttonWidth = 90;
 		int gap = 5;
 		int startX = this.width / 2 - (buttonWidth * 3 + gap * 2) / 2;
 
-		this.addRenderableWidget(Button.builder(Component.literal("Settings"), b -> this.minecraft.setScreen(new ArashiSettingsScreen(config)))
+		this.addRenderableWidget(Button.builder(Component.literal("Settings"), b -> this.minecraft.setScreen(new ArashiSettingsScreen(config, openScannerKey, toggleEspKey)))
 				.pos(startX, this.height - 26)
 				.size(buttonWidth, 20)
 				.build());
@@ -70,11 +125,23 @@ public final class BlockSelectScreen extends Screen {
 				.size(buttonWidth, 20)
 				.build());
 
-		refresh("");
+		if (panelOpen) {
+			buildColorPanel(editingBlockId);
+		}
+
+		refresh(searchQuery);
 	}
 
 	private Component debugLabel() {
 		return Component.literal("Debug: " + (scanner.isDebugMode() ? "ON" : "OFF"));
+	}
+
+	private static String viewModeLabel(ViewMode mode) {
+		return switch (mode) {
+			case ALL -> "Showing: All";
+			case SELECTED -> "Showing: Selected";
+			case UNSELECTED -> "Showing: Unselected";
+		};
 	}
 
 	private void refresh(String query) {
@@ -83,6 +150,7 @@ public final class BlockSelectScreen extends Screen {
 
 		List<Identifier> filtered = allBlockIds.stream()
 				.filter(id -> needle.isEmpty() || id.toString().contains(needle))
+				.filter(this::matchesViewMode)
 				.toList();
 
 		int columns = Math.max(1, this.grid.getRowWidth() / CELL_SIZE);
@@ -94,10 +162,102 @@ public final class BlockSelectScreen extends Screen {
 		this.grid.setScrollAmount(0);
 	}
 
+	private boolean matchesViewMode(Identifier id) {
+		boolean tracked = config.trackedBlockIds().contains(id.toString());
+
+		return switch (viewMode) {
+			case ALL -> true;
+			case SELECTED -> tracked;
+			case UNSELECTED -> !tracked;
+		};
+	}
+
+	private void openColorPanel(Identifier blockId) {
+		editingBlockId = blockId;
+		this.rebuildWidgets();
+	}
+
+	private void closeColorPanel() {
+		editingBlockId = null;
+		this.rebuildWidgets();
+	}
+
+	private void toggleTracked(Identifier blockId) {
+		boolean nowTracked = config.toggle(blockId.toString());
+
+		if (!nowTracked && blockId.equals(editingBlockId)) {
+			closeColorPanel();
+		} else {
+			refresh(searchQuery);
+		}
+	}
+
+	/** Adds the close button and outline/fill R/G/B sliders for the block being edited. */
+	private void buildColorPanel(Identifier blockId) {
+		String id = blockId.toString();
+		int x = this.width - PANEL_WIDTH + PANEL_PADDING;
+		int y = PANEL_TOP;
+
+		this.addRenderableWidget(Button.builder(Component.literal("Close"), b -> closeColorPanel())
+				.pos(x, y)
+				.size(PANEL_WIDGET_WIDTH, PANEL_WIDGET_HEIGHT)
+				.build());
+		y += PANEL_SPACING + 6;
+
+		outlineSwatchX = x + PANEL_SLIDER_WIDTH + PANEL_SWATCH_GAP;
+		outlineSwatchY = y;
+		y = addColorSliders(x, y, "Outline", () -> config.outlineColorFor(id), rgb -> config.setOutlineColorFor(id, rgb));
+
+		fillSwatchX = x + PANEL_SLIDER_WIDTH + PANEL_SWATCH_GAP;
+		fillSwatchY = y;
+		y = addColorSliders(x, y, "Fill", () -> config.fillColorFor(id), rgb -> config.setFillColorFor(id, rgb));
+
+		panelSwatchHeight = PANEL_SPACING * 3 - PANEL_SWATCH_GAP;
+		panelBottom = y;
+	}
+
+	/** Adds R/G/B sliders (0-255) for a packed 0xRRGGBB color, returning the y position after them. */
+	private int addColorSliders(int x, int y, String label, IntSupplier colorGetter, IntConsumer colorSetter) {
+		int[] shifts = {16, 8, 0};
+		String[] channelNames = {"R", "G", "B"};
+
+		for (int i = 0; i < shifts.length; i++) {
+			int shift = shifts[i];
+			String channelLabel = label + " " + channelNames[i];
+
+			this.addRenderableWidget(new ValueSlider(x, y, PANEL_SLIDER_WIDTH, PANEL_WIDGET_HEIGHT, ((colorGetter.getAsInt() >> shift) & 0xFF) / 255.0,
+					value -> Component.literal(channelLabel + ": " + Math.round(value * 255)),
+					value -> colorSetter.accept(withChannel(colorGetter.getAsInt(), shift, (int) Math.round(value * 255)))));
+			y += PANEL_SPACING;
+		}
+
+		return y;
+	}
+
+	private static int withChannel(int rgb, int shift, int value) {
+		return (rgb & ~(0xFF << shift)) | ((value & 0xFF) << shift);
+	}
+
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 		graphics.text(this.font, this.title, this.width / 2 - this.font.width(this.title) / 2, 6, 0xFFFFFFFF, true);
+
+		if (editingBlockId != null) {
+			int panelX = this.width - PANEL_WIDTH;
+			graphics.fill(panelX, 30, this.width, panelBottom + 8, 0xC0000000);
+
+			Component name = Component.literal(BlockDisplay.shortName(editingBlockId));
+			graphics.text(this.font, name, panelX + PANEL_PADDING, 34, 0xFFFFFFFF, true);
+
+			drawSwatch(graphics, outlineSwatchX, outlineSwatchY, config.outlineColorFor(editingBlockId.toString()));
+			drawSwatch(graphics, fillSwatchX, fillSwatchY, config.fillColorFor(editingBlockId.toString()));
+		}
+	}
+
+	private void drawSwatch(GuiGraphicsExtractor graphics, int x, int y, int rgb) {
+		graphics.fill(x - 1, y - 1, x + PANEL_SWATCH_WIDTH + 1, y + panelSwatchHeight + 1, 0xFFFFFFFF);
+		graphics.fill(x, y, x + PANEL_SWATCH_WIDTH, y + panelSwatchHeight, 0xFF000000 | rgb);
 	}
 
 	@Override
@@ -105,6 +265,12 @@ public final class BlockSelectScreen extends Screen {
 		config.save();
 		scanner.setTrackedBlockIds(config.trackedBlockIds());
 		super.onClose();
+	}
+
+	private enum ViewMode {
+		ALL,
+		SELECTED,
+		UNSELECTED
 	}
 
 	private final class BlockGrid extends AbstractSelectionList<BlockGrid.BlockRow> {
@@ -140,6 +306,7 @@ public final class BlockSelectScreen extends Screen {
 					int x = getX() + i * CELL_SIZE;
 					int y = getY();
 					boolean tracked = config.trackedBlockIds().contains(blockId.toString());
+					boolean editing = blockId.equals(editingBlockId);
 					boolean cellHovered = hovered && mouseX >= x && mouseX < x + CELL_SIZE
 							&& mouseY >= y && mouseY < y + getHeight();
 
@@ -152,7 +319,7 @@ public final class BlockSelectScreen extends Screen {
 					}
 
 					if (tracked) {
-						int color = 0xFF55FF55;
+						int color = editing ? 0xFFFFFF55 : 0xFF55FF55;
 						graphics.fill(x, y, x + CELL_SIZE, y + 1, color);
 						graphics.fill(x, y + getHeight() - 1, x + CELL_SIZE, y + getHeight(), color);
 						graphics.fill(x, y, x + 1, y + getHeight(), color);
@@ -174,7 +341,14 @@ public final class BlockSelectScreen extends Screen {
 					return false;
 				}
 
-				config.toggle(blockIds.get(index).toString());
+				Identifier blockId = blockIds.get(index);
+
+				if (doubleClick) {
+					toggleTracked(blockId);
+				} else if (!blockId.equals(editingBlockId) && config.trackedBlockIds().contains(blockId.toString())) {
+					openColorPanel(blockId);
+				}
+
 				return true;
 			}
 		}

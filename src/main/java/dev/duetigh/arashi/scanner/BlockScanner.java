@@ -23,14 +23,16 @@ import net.minecraft.world.level.chunk.LevelChunk;
  * never on a per-tick basis.
  */
 public final class BlockScanner {
-	private final Map<ChunkPos, Set<BlockPos>> matchesByChunk = new ConcurrentHashMap<>();
+	private final Map<ChunkPos, Map<BlockPos, Block>> matchesByChunk = new ConcurrentHashMap<>();
 	private final Map<ChunkPos, Map<Block, Integer>> countsByChunk = new ConcurrentHashMap<>();
 	private final Map<ChunkPos, LevelChunk> loadedChunks = new ConcurrentHashMap<>();
 	private volatile Set<Block> trackedBlocks = Set.of();
 	private volatile List<BlockPos> matchesSnapshot = List.of();
+	private volatile Map<BlockPos, Block> matchesWithBlocksSnapshot = Map.of();
 	private volatile Map<ChunkPos, Map<Block, Integer>> countsSnapshot = Map.of();
 	private volatile ClientLevel currentLevel;
 	private volatile boolean debugMode;
+	private volatile boolean scanningSuppressed;
 	private volatile NewMatchListener newMatchListener;
 
 	/** Notified with positions that just entered tracking, grouped by block, so callers can e.g. announce them in chat. */
@@ -82,9 +84,23 @@ public final class BlockScanner {
 		return debugMode;
 	}
 
+	/** While suppressed, chunk scans are skipped entirely - existing matches are frozen in place, not cleared. */
+	public void setScanningSuppressed(boolean suppressed) {
+		this.scanningSuppressed = suppressed;
+	}
+
+	public boolean isScanningSuppressed() {
+		return scanningSuppressed;
+	}
+
 	/** Immutable snapshot of all currently tracked block positions, safe to read from the render thread. */
 	public List<BlockPos> matches() {
 		return matchesSnapshot;
+	}
+
+	/** Immutable snapshot of all currently tracked block positions with their block type, safe to read from the render thread. */
+	public Map<BlockPos, Block> matchesWithBlocks() {
+		return matchesWithBlocksSnapshot;
 	}
 
 	/** Immutable snapshot of tracked-block counts per loaded chunk, safe to read from the render thread. */
@@ -125,6 +141,10 @@ public final class BlockScanner {
 	}
 
 	private void scanChunk(ClientLevel level, LevelChunk chunk) {
+		if (scanningSuppressed) {
+			return;
+		}
+
 		ChunkPos pos = chunk.getPos();
 
 		if (trackedBlocks.isEmpty()) {
@@ -134,8 +154,8 @@ public final class BlockScanner {
 			return;
 		}
 
-		Set<BlockPos> previous = matchesByChunk.getOrDefault(pos, Set.of());
-		Set<BlockPos> found = new HashSet<>();
+		Map<BlockPos, Block> previous = matchesByChunk.getOrDefault(pos, Map.of());
+		Map<BlockPos, Block> found = new HashMap<>();
 		Map<Block, Integer> counts = new HashMap<>();
 		int minY = level.getMinY();
 		int maxY = level.getMaxY();
@@ -147,7 +167,7 @@ public final class BlockScanner {
 					Block block = chunk.getBlockState(blockPos).getBlock();
 
 					if (trackedBlocks.contains(block)) {
-						found.add(blockPos);
+						found.put(blockPos, block);
 						counts.merge(block, 1, Integer::sum);
 					}
 				}
@@ -166,7 +186,7 @@ public final class BlockScanner {
 		notifyNewMatches(level, previous, found);
 	}
 
-	private void notifyNewMatches(ClientLevel level, Set<BlockPos> previous, Set<BlockPos> found) {
+	private void notifyNewMatches(ClientLevel level, Map<BlockPos, Block> previous, Map<BlockPos, Block> found) {
 		NewMatchListener listener = newMatchListener;
 
 		if (listener == null) {
@@ -175,10 +195,9 @@ public final class BlockScanner {
 
 		Map<Block, List<BlockPos>> newlyFound = new HashMap<>();
 
-		for (BlockPos blockPos : found) {
-			if (!previous.contains(blockPos)) {
-				Block block = level.getBlockState(blockPos).getBlock();
-				newlyFound.computeIfAbsent(block, b -> new ArrayList<>()).add(blockPos);
+		for (Map.Entry<BlockPos, Block> entry : found.entrySet()) {
+			if (!previous.containsKey(entry.getKey())) {
+				newlyFound.computeIfAbsent(entry.getValue(), b -> new ArrayList<>()).add(entry.getKey());
 			}
 		}
 
@@ -188,10 +207,14 @@ public final class BlockScanner {
 	}
 
 	private void rebuildSnapshot() {
-		List<BlockPos> all = matchesByChunk.values().stream()
-				.flatMap(Set::stream)
-				.toList();
-		matchesSnapshot = all;
+		Map<BlockPos, Block> merged = new HashMap<>();
+
+		for (Map<BlockPos, Block> chunkMatches : matchesByChunk.values()) {
+			merged.putAll(chunkMatches);
+		}
+
+		matchesWithBlocksSnapshot = Map.copyOf(merged);
+		matchesSnapshot = List.copyOf(merged.keySet());
 		countsSnapshot = Map.copyOf(countsByChunk);
 	}
 }

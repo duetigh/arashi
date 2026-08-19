@@ -4,5 +4,6 @@ package dev.duetigh.arashi.config;
 public enum EspMode {
 	OVERLAY,
 	OUTLINE,
-	BOTH
+	BOTH,
+	TEXTURE
 }

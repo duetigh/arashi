@@ -1,59 +1,53 @@
 package dev.duetigh.arashi.gui;
 
-import java.util.function.DoubleConsumer;
-import java.util.function.DoubleFunction;
-import java.util.function.IntConsumer;
-import java.util.function.IntSupplier;
+import org.lwjgl.glfw.GLFW;
 
-import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.AbstractSliderButton;
+import com.mojang.blaze3d.platform.InputConstants;
+
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.config.EspMode;
 
-/** ESP appearance (mode, outline/fill RGB color, width, opacity) and the chat-coordinates toggle. */
+/** ESP appearance (mode, width, opacity), keybind rebinding, and other toggles. Per-block overlay/outline colors are set from the block scanner screen. */
 public final class ArashiSettingsScreen extends Screen {
 	private static final int WIDGET_WIDTH = 200;
 	private static final int WIDGET_HEIGHT = 20;
 	private static final int SPACING = 24;
-	private static final int SLIDER_WIDTH = 160;
-	private static final int SWATCH_GAP = 4;
-	private static final int SWATCH_WIDTH = WIDGET_WIDTH - SLIDER_WIDTH - SWATCH_GAP;
 	private static final float MIN_OUTLINE_WIDTH = 1.0f;
 	private static final float MAX_OUTLINE_WIDTH = 8.0f;
 
 	private final ArashiConfig config;
+	private final KeyMapping openScannerKey;
+	private final KeyMapping toggleEspKey;
 
-	private int outlineSwatchX;
-	private int outlineSwatchY;
-	private int fillSwatchX;
-	private int fillSwatchY;
-	private int swatchHeight;
+	private Button openScannerKeyButton;
+	private Button toggleEspKeyButton;
+	private KeyMapping listeningFor;
 
-	public ArashiSettingsScreen(ArashiConfig config) {
+	public ArashiSettingsScreen(ArashiConfig config, KeyMapping openScannerKey, KeyMapping toggleEspKey) {
 		super(Component.literal("Arashi - Settings"));
 		this.config = config;
+		this.openScannerKey = openScannerKey;
+		this.toggleEspKey = toggleEspKey;
 	}
 
 	@Override
 	protected void init() {
 		int x = this.width / 2 - WIDGET_WIDTH / 2;
 		int y = 32;
-		swatchHeight = SPACING * 3 - SWATCH_GAP;
 
 		this.addRenderableWidget(CycleButton.builder((EspMode mode) -> Component.literal("ESP Mode: " + modeLabel(mode)), config.espMode())
 				.withValues(EspMode.values())
 				.displayOnlyValue()
 				.create(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, Component.empty(), (button, mode) -> config.setEspMode(mode)));
 		y += SPACING;
-
-		outlineSwatchX = x + SLIDER_WIDTH + SWATCH_GAP;
-		outlineSwatchY = y;
-		y = addColorSliders(x, y, "Outline", config::outlineColor, config::setOutlineColor);
 
 		this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, widthToSlider(config.outlineWidth()),
 				value -> Component.literal("Outline Width: " + String.format("%.1f", sliderToWidth(value)) + "px"),
@@ -65,10 +59,6 @@ public final class ArashiSettingsScreen extends Screen {
 				value -> config.setOutlineOpacity((float) value)));
 		y += SPACING;
 
-		fillSwatchX = x + SLIDER_WIDTH + SWATCH_GAP;
-		fillSwatchY = y;
-		y = addColorSliders(x, y, "Fill", config::fillColor, config::setFillColor);
-
 		this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, config.fillOpacity(),
 				value -> Component.literal("Fill Opacity: " + Math.round(value * 100) + "%"),
 				value -> config.setFillOpacity((float) value)));
@@ -79,44 +69,72 @@ public final class ArashiSettingsScreen extends Screen {
 						(button, enabled) -> config.setChatCoordsEnabled(enabled)));
 		y += SPACING;
 
+		this.addRenderableWidget(CycleButton.onOffBuilder(config.restrictToCrystalHollows())
+				.create(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, Component.literal("Restrict to Crystal Hollows"),
+						(button, enabled) -> config.setRestrictToCrystalHollows(enabled)));
+		y += SPACING;
+
+		this.addRenderableWidget(CycleButton.onOffBuilder(config.lobbySearchedTextEnabled())
+				.create(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, Component.literal("Lobby Searched Text"),
+						(button, enabled) -> config.setLobbySearchedTextEnabled(enabled)));
+		y += SPACING;
+
+		openScannerKeyButton = this.addRenderableWidget(Button.builder(keyLabel("Open GUI", openScannerKey), b -> startListening(openScannerKey))
+				.pos(x, y)
+				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
+				.build());
+		y += SPACING;
+
+		toggleEspKeyButton = this.addRenderableWidget(Button.builder(keyLabel("Toggle ESP", toggleEspKey), b -> startListening(toggleEspKey))
+				.pos(x, y)
+				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
+				.build());
+		y += SPACING;
+
 		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
 				.pos(x, y)
 				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
 				.build());
 	}
 
-	/** Adds R/G/B sliders (0-255) for a packed 0xRRGGBB color, returning the y position after them. */
-	private int addColorSliders(int x, int y, String label, IntSupplier colorGetter, IntConsumer colorSetter) {
-		int[] shifts = {16, 8, 0};
-		String[] channelNames = {"R", "G", "B"};
-
-		for (int i = 0; i < shifts.length; i++) {
-			int shift = shifts[i];
-			String channelLabel = label + " " + channelNames[i];
-
-			this.addRenderableWidget(new ValueSlider(x, y, SLIDER_WIDTH, WIDGET_HEIGHT, ((colorGetter.getAsInt() >> shift) & 0xFF) / 255.0,
-					value -> Component.literal(channelLabel + ": " + Math.round(value * 255)),
-					value -> colorSetter.accept(withChannel(colorGetter.getAsInt(), shift, (int) Math.round(value * 255)))));
-			y += SPACING;
-		}
-
-		return y;
+	private void startListening(KeyMapping mapping) {
+		listeningFor = mapping;
+		refreshKeyLabels();
 	}
 
-	private static int withChannel(int rgb, int shift, int value) {
-		return (rgb & ~(0xFF << shift)) | ((value & 0xFF) << shift);
+	private void refreshKeyLabels() {
+		openScannerKeyButton.setMessage(keyLabel("Open GUI", openScannerKey));
+		toggleEspKeyButton.setMessage(keyLabel("Toggle ESP", toggleEspKey));
+	}
+
+	private Component keyLabel(String action, KeyMapping mapping) {
+		if (mapping == listeningFor) {
+			return Component.literal(action + ": > Press a key, Esc to cancel <");
+		}
+
+		return Component.literal(action + ": ").append(mapping.getTranslatedKeyMessage());
 	}
 
 	@Override
-	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
-		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		drawSwatch(graphics, outlineSwatchX, outlineSwatchY, config.outlineColor());
-		drawSwatch(graphics, fillSwatchX, fillSwatchY, config.fillColor());
-	}
+	public boolean keyPressed(KeyEvent event) {
+		if (listeningFor != null) {
+			if (event.key() != GLFW.GLFW_KEY_ESCAPE) {
+				if (event.key() == GLFW.GLFW_KEY_BACKSPACE || event.key() == GLFW.GLFW_KEY_DELETE) {
+					listeningFor.setKey(InputConstants.UNKNOWN);
+				} else {
+					listeningFor.setKey(InputConstants.getKey(event));
+				}
 
-	private void drawSwatch(GuiGraphicsExtractor graphics, int x, int y, int rgb) {
-		graphics.fill(x - 1, y - 1, x + SWATCH_WIDTH + 1, y + swatchHeight + 1, 0xFFFFFFFF);
-		graphics.fill(x, y, x + SWATCH_WIDTH, y + swatchHeight, 0xFF000000 | rgb);
+				KeyMapping.resetMapping();
+				Minecraft.getInstance().options.save();
+			}
+
+			listeningFor = null;
+			refreshKeyLabels();
+			return true;
+		}
+
+		return super.keyPressed(event);
 	}
 
 	@Override
@@ -130,6 +148,7 @@ public final class ArashiSettingsScreen extends Screen {
 			case OVERLAY -> "Overlay";
 			case OUTLINE -> "Outline";
 			case BOTH -> "Both";
+			case TEXTURE -> "Texture";
 		};
 	}
 
@@ -139,28 +158,5 @@ public final class ArashiSettingsScreen extends Screen {
 
 	private static double sliderToWidth(double value) {
 		return MIN_OUTLINE_WIDTH + value * (MAX_OUTLINE_WIDTH - MIN_OUTLINE_WIDTH);
-	}
-
-	/** A slider whose 0-1 value is mapped to a display label and a config field by the caller. */
-	private static final class ValueSlider extends AbstractSliderButton {
-		private final DoubleFunction<Component> labelFactory;
-		private final DoubleConsumer onChange;
-
-		ValueSlider(int x, int y, int width, int height, double initialValue, DoubleFunction<Component> labelFactory, DoubleConsumer onChange) {
-			super(x, y, width, height, Component.empty(), initialValue);
-			this.labelFactory = labelFactory;
-			this.onChange = onChange;
-			updateMessage();
-		}
-
-		@Override
-		protected void updateMessage() {
-			setMessage(labelFactory.apply(value));
-		}
-
-		@Override
-		protected void applyValue() {
-			onChange.accept(value);
-		}
 	}
 }
