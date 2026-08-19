@@ -8,6 +8,7 @@ import java.util.regex.Pattern;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.scores.DisplaySlot;
 import net.minecraft.world.scores.Objective;
 import net.minecraft.world.scores.PlayerScoreEntry;
@@ -44,7 +45,13 @@ public final class HypixelWidgetReader {
 		String serverInstance = null;
 
 		for (PlayerScoreEntry entry : scoreboard.listPlayerScores(sidebar)) {
-			String line = entry.display().getString().strip();
+			Component display = entry.display();
+
+			if (display == null) {
+				continue;
+			}
+
+			String line = display.getString().strip();
 			Matcher matcher = LABEL_VALUE.matcher(line);
 
 			if (!matcher.matches()) {
