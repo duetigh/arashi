@@ -1,5 +1,6 @@
 package dev.duetigh.arashi;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.lwjgl.glfw.GLFW;
@@ -8,9 +9,12 @@ import org.slf4j.LoggerFactory;
 
 import com.mojang.blaze3d.platform.InputConstants;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
 
@@ -34,7 +38,9 @@ public final class ArashiClient implements ClientModInitializer {
 	public static final String MOD_ID = "arashi";
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-	private final AtomicReference<String> pendingUpdateVersion = new AtomicReference<>();
+	private final AtomicReference<UpdateChecker.UpdateInfo> pendingUpdate = new AtomicReference<>();
+	private final AtomicReference<UpdateChecker.UpdateInfo> latestUpdate = new AtomicReference<>();
+	private final AtomicBoolean updateInProgress = new AtomicBoolean();
 
 	private ArashiConfig config;
 	private BlockScanner scanner;
@@ -53,7 +59,7 @@ public final class ArashiClient implements ClientModInitializer {
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
 			scanner.clear();
 			client.player.sendSystemMessage(joinMessage());
-			String pending = pendingUpdateVersion.getAndSet(null);
+			UpdateChecker.UpdateInfo pending = pendingUpdate.getAndSet(null);
 
 			if (pending != null) {
 				client.player.sendSystemMessage(updateMessage(pending));
@@ -64,13 +70,14 @@ public final class ArashiClient implements ClientModInitializer {
 		registerCommand();
 		registerIncrementalRescan();
 
-		UpdateChecker.checkAsync(newVersion -> {
+		UpdateChecker.checkAsync(info -> {
+			latestUpdate.set(info);
 			Minecraft client = Minecraft.getInstance();
 
 			if (client.player != null) {
-				client.player.sendSystemMessage(updateMessage(newVersion));
+				client.player.sendSystemMessage(updateMessage(info));
 			} else {
-				pendingUpdateVersion.set(newVersion);
+				pendingUpdate.set(info);
 			}
 		});
 	}
@@ -104,24 +111,80 @@ public final class ArashiClient implements ClientModInitializer {
 
 	private void registerCommand() {
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
-				ClientCommands.literal("arashi").executes(context -> {
-					Minecraft client = Minecraft.getInstance();
-					client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner)));
-					return 1;
-				})));
+				ClientCommands.literal("arashi")
+						.executes(context -> {
+							Minecraft client = Minecraft.getInstance();
+							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner)));
+							return 1;
+						})
+						.then(ClientCommands.literal("update").executes(context -> {
+							requestUpdateDownload();
+							return 1;
+						}))));
+	}
+
+	private void requestUpdateDownload() {
+		UpdateChecker.UpdateInfo info = latestUpdate.get();
+		Minecraft client = Minecraft.getInstance();
+
+		if (info == null || info.downloadUrl() == null) {
+			if (client.player != null) {
+				client.player.sendSystemMessage(prefixed("No update download available."));
+			}
+
+			return;
+		}
+
+		if (!updateInProgress.compareAndSet(false, true)) {
+			return;
+		}
+
+		if (client.player != null) {
+			client.player.sendSystemMessage(prefixed("Downloading update " + info.version() + "..."));
+		}
+
+		UpdateChecker.downloadAndStageAsync(info.downloadUrl(),
+				() -> client.execute(() -> {
+					if (client.player != null) {
+						client.player.sendSystemMessage(prefixed("Update downloaded! It will be installed the next time you close the game."));
+					}
+				}),
+				error -> client.execute(() -> {
+					updateInProgress.set(false);
+
+					if (client.player != null) {
+						client.player.sendSystemMessage(prefixed("Update download failed: " + error.getMessage())
+								.withStyle(ChatFormatting.RED));
+					}
+				}));
 	}
 
 	private static MutableComponent joinMessage() {
 		return Component.literal("[").append(GradientText.arashi()).append(Component.literal("] Mod loaded."));
 	}
 
-	private static MutableComponent updateMessage(String newVersion) {
+	private static MutableComponent prefixed(String message) {
+		return Component.literal("[").append(GradientText.arashi()).append(Component.literal("] " + message));
+	}
+
+	private static MutableComponent updateMessage(UpdateChecker.UpdateInfo info) {
 		String currentVersion = FabricLoader.getInstance()
 				.getModContainer(MOD_ID)
 				.map(mod -> mod.getMetadata().getVersion().getFriendlyString())
 				.orElse("?");
 
+		MutableComponent versionText = Component.literal(currentVersion + " -> " + info.version());
+
+		if (info.downloadUrl() != null) {
+			versionText = versionText.withStyle(style -> style
+					.withColor(ChatFormatting.AQUA)
+					.withUnderlined(true)
+					.withClickEvent(new ClickEvent.RunCommand("/arashi update"))
+					.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to download and install on next restart"))));
+		}
+
 		return Component.literal("[").append(GradientText.arashi())
-				.append(Component.literal("] Update available! Version " + currentVersion + " -> " + newVersion));
+				.append(Component.literal("] Update available! Version "))
+				.append(versionText);
 	}
 }

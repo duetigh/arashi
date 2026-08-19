@@ -68,7 +68,7 @@ public final class BlockSelectScreen extends Screen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		graphics.text(this.font, this.title, this.width / 2 - this.font.width(this.title) / 2, 6, 0xFFFFFF, true);
+		graphics.text(this.font, this.title, this.width / 2 - this.font.width(this.title) / 2, 6, 0xFFFFFFFF, true);
 	}
 
 	@Override
@@ -111,7 +111,7 @@ public final class BlockSelectScreen extends Screen {
 				String checkbox = tracked ? "[x]" : "[ ]";
 				Component line = Component.literal(checkbox + " " + blockId)
 						.withStyle(tracked ? ChatFormatting.GREEN : ChatFormatting.GRAY);
-				graphics.text(BlockSelectScreen.this.font, line, getContentX() + 4, getContentY() + 4, 0xFFFFFF, false);
+				graphics.text(BlockSelectScreen.this.font, line, getContentX() + 4, getContentY() + 4, 0xFFFFFFFF, false);
 			}
 
 			@Override
