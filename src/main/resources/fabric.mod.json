@@ -1,0 +1,27 @@
+{
+	"schemaVersion": 1,
+	"id": "arashi",
+	"version": "${version}",
+	"name": "Arashi",
+	"description": "Client-side block scanner and x-ray style ESP renderer with a self-updating jar.",
+	"authors": [
+		"duetigh"
+	],
+	"contact": {
+		"sources": "https://github.com/duetigh/arashi",
+		"issues": "https://github.com/duetigh/arashi/issues"
+	},
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"dev.duetigh.arashi.ArashiClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.1.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

@@ -1,0 +1,33 @@
+# Builds arashi.jar and attaches it to the GitHub Release for the pushed tag.
+# The in-game auto-updater (UpdateChecker) reads this release's tag and downloads
+# this exact asset name, so it must stay "arashi.jar" on every release.
+name: release
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'microsoft'
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+      - name: build
+        run: ./gradlew build
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/libs/arashi.jar
+          generate_release_notes: true
