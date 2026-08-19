@@ -74,13 +74,22 @@ public final class ArashiConfig {
 		data.espMode = mode.name();
 	}
 
-	/** Outline hue, 0.0-1.0, at full saturation/brightness. */
-	public float outlineHue() {
-		return data.outlineHue;
+	/** Outline color, packed as 0xRRGGBB. */
+	public int outlineColor() {
+		return data.outlineColor;
 	}
 
-	public void setOutlineHue(float hue) {
-		data.outlineHue = hue;
+	public void setOutlineColor(int rgb) {
+		data.outlineColor = rgb & 0xFFFFFF;
+	}
+
+	/** Fill color, packed as 0xRRGGBB. */
+	public int fillColor() {
+		return data.fillColor;
+	}
+
+	public void setFillColor(int rgb) {
+		data.fillColor = rgb & 0xFFFFFF;
 	}
 
 	/** Outline width in pixels. */
@@ -133,7 +142,8 @@ public final class ArashiConfig {
 	private static final class Data {
 		Set<String> trackedBlockIds = new LinkedHashSet<>();
 		String espMode = EspMode.BOTH.name();
-		float outlineHue = 0.0f;
+		int outlineColor = 0xFF0000;
+		int fillColor = 0xFF3333;
 		float outlineWidth = 2.0f;
 		float fillOpacity = 0.45f;
 		float outlineOpacity = 1.0f;

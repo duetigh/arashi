@@ -2,7 +2,10 @@ package dev.duetigh.arashi.gui;
 
 import java.util.function.DoubleConsumer;
 import java.util.function.DoubleFunction;
+import java.util.function.IntConsumer;
+import java.util.function.IntSupplier;
 
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
@@ -12,15 +15,24 @@ import net.minecraft.network.chat.Component;
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.config.EspMode;
 
-/** ESP appearance (mode, outline color/width, fill/outline opacity) and the chat-coordinates toggle. */
+/** ESP appearance (mode, outline/fill RGB color, width, opacity) and the chat-coordinates toggle. */
 public final class ArashiSettingsScreen extends Screen {
 	private static final int WIDGET_WIDTH = 200;
 	private static final int WIDGET_HEIGHT = 20;
 	private static final int SPACING = 24;
+	private static final int SLIDER_WIDTH = 160;
+	private static final int SWATCH_GAP = 4;
+	private static final int SWATCH_WIDTH = WIDGET_WIDTH - SLIDER_WIDTH - SWATCH_GAP;
 	private static final float MIN_OUTLINE_WIDTH = 1.0f;
 	private static final float MAX_OUTLINE_WIDTH = 8.0f;
 
 	private final ArashiConfig config;
+
+	private int outlineSwatchX;
+	private int outlineSwatchY;
+	private int fillSwatchX;
+	private int fillSwatchY;
+	private int swatchHeight;
 
 	public ArashiSettingsScreen(ArashiConfig config) {
 		super(Component.literal("Arashi - Settings"));
@@ -31,6 +43,7 @@ public final class ArashiSettingsScreen extends Screen {
 	protected void init() {
 		int x = this.width / 2 - WIDGET_WIDTH / 2;
 		int y = 32;
+		swatchHeight = SPACING * 3 - SWATCH_GAP;
 
 		this.addRenderableWidget(CycleButton.builder((EspMode mode) -> Component.literal("ESP Mode: " + modeLabel(mode)), config.espMode())
 				.withValues(EspMode.values())
@@ -38,24 +51,27 @@ public final class ArashiSettingsScreen extends Screen {
 				.create(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, Component.empty(), (button, mode) -> config.setEspMode(mode)));
 		y += SPACING;
 
-		this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, config.outlineHue(),
-				value -> Component.literal("Outline Color: " + Math.round(value * 360) + "°"),
-				value -> config.setOutlineHue((float) value)));
-		y += SPACING;
+		outlineSwatchX = x + SLIDER_WIDTH + SWATCH_GAP;
+		outlineSwatchY = y;
+		y = addColorSliders(x, y, "Outline", config::outlineColor, config::setOutlineColor);
 
 		this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, widthToSlider(config.outlineWidth()),
 				value -> Component.literal("Outline Width: " + String.format("%.1f", sliderToWidth(value)) + "px"),
 				value -> config.setOutlineWidth((float) sliderToWidth(value))));
 		y += SPACING;
 
-		this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, config.fillOpacity(),
-				value -> Component.literal("Overlay Opacity: " + Math.round(value * 100) + "%"),
-				value -> config.setFillOpacity((float) value)));
-		y += SPACING;
-
 		this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, config.outlineOpacity(),
 				value -> Component.literal("Outline Opacity: " + Math.round(value * 100) + "%"),
 				value -> config.setOutlineOpacity((float) value)));
+		y += SPACING;
+
+		fillSwatchX = x + SLIDER_WIDTH + SWATCH_GAP;
+		fillSwatchY = y;
+		y = addColorSliders(x, y, "Fill", config::fillColor, config::setFillColor);
+
+		this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, config.fillOpacity(),
+				value -> Component.literal("Fill Opacity: " + Math.round(value * 100) + "%"),
+				value -> config.setFillOpacity((float) value)));
 		y += SPACING;
 
 		this.addRenderableWidget(CycleButton.onOffBuilder(config.chatCoordsEnabled())
@@ -67,6 +83,40 @@ public final class ArashiSettingsScreen extends Screen {
 				.pos(x, y)
 				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
 				.build());
+	}
+
+	/** Adds R/G/B sliders (0-255) for a packed 0xRRGGBB color, returning the y position after them. */
+	private int addColorSliders(int x, int y, String label, IntSupplier colorGetter, IntConsumer colorSetter) {
+		int[] shifts = {16, 8, 0};
+		String[] channelNames = {"R", "G", "B"};
+
+		for (int i = 0; i < shifts.length; i++) {
+			int shift = shifts[i];
+			String channelLabel = label + " " + channelNames[i];
+
+			this.addRenderableWidget(new ValueSlider(x, y, SLIDER_WIDTH, WIDGET_HEIGHT, ((colorGetter.getAsInt() >> shift) & 0xFF) / 255.0,
+					value -> Component.literal(channelLabel + ": " + Math.round(value * 255)),
+					value -> colorSetter.accept(withChannel(colorGetter.getAsInt(), shift, (int) Math.round(value * 255)))));
+			y += SPACING;
+		}
+
+		return y;
+	}
+
+	private static int withChannel(int rgb, int shift, int value) {
+		return (rgb & ~(0xFF << shift)) | ((value & 0xFF) << shift);
+	}
+
+	@Override
+	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+		super.extractRenderState(graphics, mouseX, mouseY, delta);
+		drawSwatch(graphics, outlineSwatchX, outlineSwatchY, config.outlineColor());
+		drawSwatch(graphics, fillSwatchX, fillSwatchY, config.fillColor());
+	}
+
+	private void drawSwatch(GuiGraphicsExtractor graphics, int x, int y, int rgb) {
+		graphics.fill(x - 1, y - 1, x + SWATCH_WIDTH + 1, y + swatchHeight + 1, 0xFFFFFFFF);
+		graphics.fill(x, y, x + SWATCH_WIDTH, y + swatchHeight, 0xFF000000 | rgb);
 	}
 
 	@Override

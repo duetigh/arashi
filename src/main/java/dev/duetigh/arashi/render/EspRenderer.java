@@ -1,13 +1,12 @@
 package dev.duetigh.arashi.render;
 
-import java.awt.Color;
 import java.util.List;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.phys.AABB;
@@ -20,14 +19,11 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 
 /**
- * Draws a translucent box and/or wireframe outline over every tracked block position, through
- * terrain, using the submit-node geometry path so the boxes are batched with the rest of the frame.
+ * Draws a translucent box and/or wireframe outline over every tracked block position. Uses
+ * depth-test-disabled render types (see {@link EspRenderTypes}) so boxes stay visible through
+ * terrain instead of being occluded like normal world geometry - that's the point of an ESP.
  */
 public final class EspRenderer {
-	private static final float RED = 1.0f;
-	private static final float GREEN = 0.2f;
-	private static final float BLUE = 0.2f;
-
 	private final BlockScanner scanner;
 	private final ArashiConfig config;
 
@@ -54,13 +50,18 @@ public final class EspRenderer {
 		Minecraft client = Minecraft.getInstance();
 		int renderDistanceBlocks = client.options.renderDistance().get() * 16;
 		Vec3 camera = context.levelState().cameraRenderState.pos;
-		int fillColor = ARGB.colorFromFloat(config.fillOpacity(), RED, GREEN, BLUE);
-		int outlineColor = outlineColor();
+		int fillColor = withOpacity(config.fillColor(), config.fillOpacity());
+		int outlineColor = withOpacity(config.outlineColor(), config.outlineOpacity());
 		float outlineWidth = config.outlineWidth();
 
+		MultiBufferSource.BufferSource bufferSource = context.bufferSource();
 		PoseStack poseStack = context.poseStack();
 		poseStack.pushPose();
 		poseStack.translate(-camera.x, -camera.y, -camera.z);
+		PoseStack.Pose pose = poseStack.last();
+
+		VertexConsumer fillBuffer = drawFill ? bufferSource.getBuffer(EspRenderTypes.FILLED_BOX) : null;
+		VertexConsumer outlineBuffer = drawOutline ? bufferSource.getBuffer(EspRenderTypes.LINES) : null;
 
 		for (BlockPos pos : matches) {
 			if (pos.distToCenterSqr(camera.x, camera.y, camera.z) > (double) renderDistanceBlocks * renderDistanceBlocks) {
@@ -69,24 +70,23 @@ public final class EspRenderer {
 
 			AABB box = new AABB(pos);
 
-			if (drawFill) {
-				context.submitNodeCollector().submitCustomGeometry(poseStack, RenderTypes.debugFilledBox(), (pose, buffer) -> drawFilledBox(pose, buffer, box, fillColor));
+			if (fillBuffer != null) {
+				drawFilledBox(pose, fillBuffer, box, fillColor);
 			}
 
-			if (drawOutline) {
-				context.submitNodeCollector().submitCustomGeometry(poseStack, RenderTypes.lines(), (pose, buffer) -> drawLineBox(pose, buffer, box, outlineColor, outlineWidth));
+			if (outlineBuffer != null) {
+				drawLineBox(pose, outlineBuffer, box, outlineColor, outlineWidth);
 			}
 		}
 
 		poseStack.popPose();
 	}
 
-	private int outlineColor() {
-		int rgb = Color.HSBtoRGB(config.outlineHue(), 1.0f, 1.0f);
+	private static int withOpacity(int rgb, float alpha) {
 		float r = ((rgb >> 16) & 0xFF) / 255.0f;
 		float g = ((rgb >> 8) & 0xFF) / 255.0f;
 		float b = (rgb & 0xFF) / 255.0f;
-		return ARGB.colorFromFloat(config.outlineOpacity(), r, g, b);
+		return ARGB.colorFromFloat(alpha, r, g, b);
 	}
 
 	// Debug-filled-box's pipeline back-face culls, so every quad below is wound counter-clockwise
