@@ -105,7 +105,8 @@ public final class ArashiClient implements ClientModInitializer {
 	private void registerCommand() {
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
 				ClientCommands.literal("arashi").executes(context -> {
-					Minecraft.getInstance().setScreen(new BlockSelectScreen(config, scanner));
+					Minecraft client = Minecraft.getInstance();
+					client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner)));
 					return 1;
 				})));
 	}
