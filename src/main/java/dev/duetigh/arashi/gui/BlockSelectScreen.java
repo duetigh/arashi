@@ -51,14 +51,23 @@ public final class BlockSelectScreen extends Screen {
 		this.grid = this.addRenderableOnly(new BlockGrid(this.minecraft, this.width, this.height - 80, 52, CELL_SIZE));
 		this.addWidget(this.grid);
 
+		int buttonWidth = 90;
+		int gap = 5;
+		int startX = this.width / 2 - (buttonWidth * 3 + gap * 2) / 2;
+
+		this.addRenderableWidget(Button.builder(Component.literal("Settings"), b -> this.minecraft.setScreen(new ArashiSettingsScreen(config)))
+				.pos(startX, this.height - 26)
+				.size(buttonWidth, 20)
+				.build());
+
 		this.debugButton = this.addRenderableWidget(Button.builder(debugLabel(), b -> {
 			scanner.setDebugMode(!scanner.isDebugMode());
 			b.setMessage(debugLabel());
-		}).pos(this.width / 2 - 105, this.height - 26).size(100, 20).build());
+		}).pos(startX + buttonWidth + gap, this.height - 26).size(buttonWidth, 20).build());
 
 		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-				.pos(this.width / 2 + 5, this.height - 26)
-				.size(100, 20)
+				.pos(startX + (buttonWidth + gap) * 2, this.height - 26)
+				.size(buttonWidth, 20)
 				.build());
 
 		refresh("");

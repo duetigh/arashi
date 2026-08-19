@@ -1,7 +1,10 @@
 package dev.duetigh.arashi;
 
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
@@ -12,11 +15,15 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.block.Block;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -34,6 +41,7 @@ import dev.duetigh.arashi.render.EspRenderer;
 import dev.duetigh.arashi.scanner.BlockScanner;
 import dev.duetigh.arashi.text.GradientText;
 import dev.duetigh.arashi.update.UpdateChecker;
+import dev.duetigh.arashi.util.BlockDisplay;
 
 public final class ArashiClient implements ClientModInitializer {
 	public static final String MOD_ID = "arashi";
@@ -52,8 +60,9 @@ public final class ArashiClient implements ClientModInitializer {
 		config = ArashiConfig.load();
 		scanner = new BlockScanner();
 		scanner.setTrackedBlockIds(config.trackedBlockIds());
+		scanner.setNewMatchListener(this::onNewMatches);
 
-		new EspRenderer(scanner).register();
+		new EspRenderer(scanner, config).register();
 		new DebugHudRenderer(scanner).register();
 
 		ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> scanner.onChunkLoad(level, chunk));
@@ -159,6 +168,33 @@ public final class ArashiClient implements ClientModInitializer {
 								.withStyle(ChatFormatting.RED));
 					}
 				}));
+	}
+
+	private void onNewMatches(ClientLevel level, Map<Block, List<BlockPos>> newlyFound) {
+		if (!config.chatCoordsEnabled()) {
+			return;
+		}
+
+		Minecraft client = Minecraft.getInstance();
+
+		client.execute(() -> {
+			if (client.player == null) {
+				return;
+			}
+
+			for (Map.Entry<Block, List<BlockPos>> entry : newlyFound.entrySet()) {
+				client.player.sendSystemMessage(matchMessage(entry.getKey(), entry.getValue()));
+			}
+		});
+	}
+
+	private static MutableComponent matchMessage(Block block, List<BlockPos> positions) {
+		Identifier id = BuiltInRegistries.BLOCK.getKey(block);
+		String coords = positions.stream()
+				.map(pos -> "(" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")")
+				.collect(Collectors.joining(", "));
+
+		return prefixed(BlockDisplay.shortName(id) + " found at " + coords);
 	}
 
 	private static MutableComponent joinMessage() {

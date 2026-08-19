@@ -1,5 +1,6 @@
 package dev.duetigh.arashi.scanner;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -30,6 +31,16 @@ public final class BlockScanner {
 	private volatile Map<ChunkPos, Map<Block, Integer>> countsSnapshot = Map.of();
 	private volatile ClientLevel currentLevel;
 	private volatile boolean debugMode;
+	private volatile NewMatchListener newMatchListener;
+
+	/** Notified with positions that just entered tracking, grouped by block, so callers can e.g. announce them in chat. */
+	public interface NewMatchListener {
+		void onNewMatches(ClientLevel level, Map<Block, List<BlockPos>> newlyFound);
+	}
+
+	public void setNewMatchListener(NewMatchListener listener) {
+		this.newMatchListener = listener;
+	}
 
 	public void setTrackedBlockIds(Collection<String> blockIds) {
 		Set<Block> resolved = new HashSet<>();
@@ -123,6 +134,7 @@ public final class BlockScanner {
 			return;
 		}
 
+		Set<BlockPos> previous = matchesByChunk.getOrDefault(pos, Set.of());
 		Set<BlockPos> found = new HashSet<>();
 		Map<Block, Integer> counts = new HashMap<>();
 		int minY = level.getMinY();
@@ -151,6 +163,28 @@ public final class BlockScanner {
 		}
 
 		rebuildSnapshot();
+		notifyNewMatches(level, previous, found);
+	}
+
+	private void notifyNewMatches(ClientLevel level, Set<BlockPos> previous, Set<BlockPos> found) {
+		NewMatchListener listener = newMatchListener;
+
+		if (listener == null) {
+			return;
+		}
+
+		Map<Block, List<BlockPos>> newlyFound = new HashMap<>();
+
+		for (BlockPos blockPos : found) {
+			if (!previous.contains(blockPos)) {
+				Block block = level.getBlockState(blockPos).getBlock();
+				newlyFound.computeIfAbsent(block, b -> new ArrayList<>()).add(blockPos);
+			}
+		}
+
+		if (!newlyFound.isEmpty()) {
+			listener.onNewMatches(level, newlyFound);
+		}
 	}
 
 	private void rebuildSnapshot() {

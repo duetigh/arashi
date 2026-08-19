@@ -113,7 +113,10 @@ public final class UpdateChecker {
 		Files.createDirectories(stagingDir);
 		Path stagedJar = stagingDir.resolve("arashi.jar");
 
-		HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+		HttpClient client = HttpClient.newBuilder()
+				.connectTimeout(TIMEOUT)
+				.followRedirects(HttpClient.Redirect.NORMAL)
+				.build();
 		HttpRequest request = HttpRequest.newBuilder().uri(URI.create(downloadUrl)).GET().build();
 		HttpResponse<Path> response = client.send(request, HttpResponse.BodyHandlers.ofFile(stagedJar));
 
