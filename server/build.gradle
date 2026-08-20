@@ -16,8 +16,10 @@ application {
 	mainClass = project.mainClass
 }
 
+// Targets Java 21 (not 25 like the mod) so it runs on whatever JDK is readily available via
+// apt on the deployment VM - nothing here needs Java 25-specific features.
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 25
+	it.options.release = 21
 }
 
 // Single fat jar with a fixed name, so the systemd unit and deployment steps in
