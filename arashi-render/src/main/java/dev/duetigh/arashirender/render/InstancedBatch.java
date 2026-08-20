@@ -13,23 +13,26 @@ public final class InstancedBatch {
 	private final int instanceVbo;
 	private int instanceCount;
 	private float[] color = {1, 1, 1};
+	private Integer textureId;
 
 	public InstancedBatch(CubeGeometry cube) {
 		vao = glGenVertexArrays();
 		glBindVertexArray(vao);
 
 		glBindBuffer(GL_ARRAY_BUFFER, cube.vbo());
-		int stride = 6 * Float.BYTES;
+		int stride = 8 * Float.BYTES;
 		glVertexAttribPointer(0, 3, GL_FLOAT, false, stride, 0);
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(1, 3, GL_FLOAT, false, stride, 3L * Float.BYTES);
 		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(2, 2, GL_FLOAT, false, stride, 6L * Float.BYTES);
+		glEnableVertexAttribArray(2);
 
 		instanceVbo = glGenBuffers();
 		glBindBuffer(GL_ARRAY_BUFFER, instanceVbo);
-		glVertexAttribPointer(2, 3, GL_FLOAT, false, 3 * Float.BYTES, 0);
-		glEnableVertexAttribArray(2);
-		glVertexAttribDivisor(2, 1);
+		glVertexAttribPointer(3, 3, GL_FLOAT, false, 3 * Float.BYTES, 0);
+		glEnableVertexAttribArray(3);
+		glVertexAttribDivisor(3, 1);
 
 		glBindVertexArray(0);
 	}
@@ -42,6 +45,15 @@ public final class InstancedBatch {
 
 	public float[] color() {
 		return color;
+	}
+
+	/** Sets the GL texture to sample for this batch, or null to fall back to the flat {@link #color()}. */
+	public void setTexture(Integer glTextureId) {
+		this.textureId = glTextureId;
+	}
+
+	public Integer textureId() {
+		return textureId;
 	}
 
 	/** Uploads block-corner world positions (already offset to the -X/-Y/-Z corner of each cube) for this batch. */

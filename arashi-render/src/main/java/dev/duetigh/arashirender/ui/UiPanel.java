@@ -1,7 +1,6 @@
 package dev.duetigh.arashirender.ui;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -13,15 +12,17 @@ import imgui.type.ImBoolean;
 import imgui.type.ImInt;
 import imgui.type.ImString;
 
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
+
 import dev.duetigh.arashirender.AppState;
 import dev.duetigh.arashirender.palette.BlockNames;
+import dev.duetigh.arashirender.render.RenderMode;
+import dev.duetigh.arashirender.texture.TextureSource;
 import dev.duetigh.arashirender.view.ExportWriter;
 import dev.duetigh.arashirender.view.SavedView;
 import dev.duetigh.arashirender.world.Filters;
 import dev.duetigh.arashirender.world.Raycaster;
 import dev.duetigh.arashirender.world.VoxelWorld;
-
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 /** The single ImGui control panel: scan loading, filters, block-under-cursor inspector, and saved views. */
 public final class UiPanel {
@@ -33,9 +34,16 @@ public final class UiPanel {
 		ImGui.setNextWindowPos(20, 20, imgui.flag.ImGuiCond.FirstUseEver);
 		ImGui.begin("Arashi Render");
 
+		if (ImGui.button("< Library")) {
+			state.screen = AppState.Screen.LIBRARY;
+		}
+
+		ImGui.separator();
 		drawScanSection(state);
 
 		if (state.hasScan()) {
+			ImGui.separator();
+			drawSettings(state);
 			ImGui.separator();
 			drawFilters(state);
 			ImGui.separator();
@@ -49,36 +57,7 @@ public final class UiPanel {
 
 	private void drawScanSection(AppState state) {
 		ImGui.text("Scan");
-
-		if (ImGui.button("Paste from clipboard")) {
-			String clipboard = ImGui.getClipboardText();
-
-			if (clipboard != null && !clipboard.isBlank()) {
-				tryLoad(state, clipboard, "Pasted scan");
-			} else {
-				state.statusMessage = "Clipboard is empty.";
-			}
-		}
-
-		ImGui.sameLine();
-
-		if (ImGui.button("Open scan file...")) {
-			String path = TinyFileDialogs.tinyfd_openFileDialog("Open Arashi scan", "", null, "Scan text files", false);
-
-			if (path != null) {
-				try {
-					String content = Files.readString(Path.of(path));
-					String name = Path.of(path).getFileName().toString();
-					tryLoad(state, content, name);
-				} catch (IOException e) {
-					state.statusMessage = "Failed to read file: " + e.getMessage();
-				}
-			}
-		}
-
-		if (!state.statusMessage.isEmpty()) {
-			ImGui.textColored(1.0f, 0.45f, 0.45f, 1.0f, state.statusMessage);
-		}
+		ImportControls.draw(state, null);
 
 		if (state.hasScan()) {
 			ImGui.text("Loaded: " + state.scanName);
@@ -90,12 +69,51 @@ public final class UiPanel {
 		}
 	}
 
-	private void tryLoad(AppState state, String compactString, String name) {
-		try {
-			state.loadFromCompactString(compactString, name);
-			state.statusMessage = "";
-		} catch (Exception e) {
-			state.statusMessage = "Failed to load scan: " + e.getMessage();
+	private void drawSettings(AppState state) {
+		ImGui.text("Settings");
+
+		ImBoolean centerOnLoad = new ImBoolean(state.settings.centerOnLoad);
+		if (ImGui.checkbox("Center view on load", centerOnLoad)) {
+			state.settings.centerOnLoad = centerOnLoad.get();
+			state.settings.save();
+		}
+
+		ImGui.sameLine();
+
+		if (ImGui.button("Center view now")) {
+			state.centerView();
+		}
+
+		ImInt mode = new ImInt(state.settings.renderMode == RenderMode.TEXTURE ? 1 : 0);
+		if (ImGui.radioButton("Color##rendermode", mode, 0) || ImGui.radioButton("Texture##rendermode", mode, 1)) {
+			state.settings.renderMode = mode.get() == 1 ? RenderMode.TEXTURE : RenderMode.COLOR;
+			state.settings.save();
+			state.needsRebuild = true;
+		}
+
+		if (ImGui.button("Texture source...")) {
+			String startDir = TextureSource.defaultVersionsDir();
+			String path = TinyFileDialogs.tinyfd_openFileDialog("Select a Minecraft version jar or resource pack",
+					startDir != null ? startDir + "/" : "", null, "Minecraft jar/zip", false);
+
+			if (path != null) {
+				try {
+					state.textureLoader.setSource(path);
+					state.settings.textureSourcePath = path;
+					state.settings.save();
+					state.needsRebuild = true;
+				} catch (Exception e) {
+					state.statusMessage = "Failed to open texture source: " + e.getMessage();
+				}
+			}
+		}
+
+		ImGui.sameLine();
+
+		if (state.textureLoader.hasSource()) {
+			ImGui.textDisabled(state.textureLoader.sourcePath());
+		} else {
+			ImGui.textDisabled("No local Minecraft install found - falling back to colors.");
 		}
 	}
 
@@ -120,6 +138,11 @@ public final class UiPanel {
 		ImBoolean isolate = new ImBoolean(filters.isolateEnabled());
 		if (ImGui.checkbox("Isolate mode", isolate)) {
 			filters.setIsolateEnabled(isolate.get());
+
+			if (isolate.get() && filters.isolateSeedIndex() < 0) {
+				filters.setIsolateSeedIndex(0);
+			}
+
 			filters.recomputeIsolate(state.world);
 			state.needsRebuild = true;
 		}
@@ -193,6 +216,28 @@ public final class UiPanel {
 	private void drawInspector(AppState state, Raycaster.Hit hit) {
 		ImGui.text("Inspector");
 
+		ImGui.beginDisabled(!state.canUndo());
+		if (ImGui.button("Undo")) {
+			state.undo();
+		}
+		ImGui.endDisabled();
+
+		ImGui.sameLine();
+
+		ImGui.beginDisabled(!state.canRedo());
+		if (ImGui.button("Redo")) {
+			state.redo();
+		}
+		ImGui.endDisabled();
+
+		if (state.selectedKey != null) {
+			ImGui.sameLine();
+
+			if (ImGui.button("Delete selected")) {
+				state.deleteSelected();
+			}
+		}
+
 		if (hit == null) {
 			ImGui.textDisabled("No block under cursor.");
 			return;
@@ -202,6 +247,7 @@ public final class UiPanel {
 		ImGui.text(BlockNames.friendly(blockId) + " (" + blockId + ")");
 		ImGui.text("Position: " + hit.x() + ", " + hit.y() + ", " + hit.z());
 		ImGui.text("Chunk: " + Math.floorDiv(hit.x(), 16) + ", " + Math.floorDiv(hit.z(), 16));
+		ImGui.textDisabled("Click to select, Delete to remove, Ctrl+Z/Ctrl+Y to undo/redo.");
 	}
 
 	private void drawViews(AppState state) {

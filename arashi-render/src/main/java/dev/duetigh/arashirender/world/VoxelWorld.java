@@ -152,6 +152,30 @@ public final class VoxelWorld {
 		return cells.size();
 	}
 
+	/** Removes the cell at the given packed key, if present. Returns its palette index, or -1 if it wasn't there. */
+	public int removeCell(long key) {
+		Integer removed = cells.remove(key);
+
+		if (removed == null) {
+			return -1;
+		}
+
+		blockCountsByPalette[removed]--;
+		return removed;
+	}
+
+	/** Restores/overwrites the cell at the given packed key with the given palette index. */
+	public void putCell(long key, int paletteIndex) {
+		Integer previous = cells.put(key, paletteIndex);
+
+		if (previous == null) {
+			blockCountsByPalette[paletteIndex]++;
+		} else if (previous != paletteIndex) {
+			blockCountsByPalette[previous]--;
+			blockCountsByPalette[paletteIndex]++;
+		}
+	}
+
 	public static int unpackX(long key) {
 		return (int) ((key >>> (Y_BITS + Z_BITS)) & X_MASK) - (int) X_OFFSET;
 	}

@@ -20,11 +20,13 @@ dependencies {
 	implementation 'org.lwjgl:lwjgl-glfw'
 	implementation 'org.lwjgl:lwjgl-opengl'
 	implementation 'org.lwjgl:lwjgl-tinyfd' // native open/save file dialogs
+	implementation 'org.lwjgl:lwjgl-stb' // PNG decoding for the Minecraft-texture render mode
 	nativesClassifiers.each { classifier ->
 		runtimeOnly "org.lwjgl:lwjgl::$classifier"
 		runtimeOnly "org.lwjgl:lwjgl-glfw::$classifier"
 		runtimeOnly "org.lwjgl:lwjgl-opengl::$classifier"
 		runtimeOnly "org.lwjgl:lwjgl-tinyfd::$classifier"
+		runtimeOnly "org.lwjgl:lwjgl-stb::$classifier"
 	}
 
 	implementation "org.joml:joml:${jomlVersion}"
@@ -45,6 +47,28 @@ application {
 		applicationDefaultJvmArgs = ['-XstartOnFirstThread']
 	}
 }
+
+// Bakes the release tag this build was packaged from into a resource UpdateChecker reads at
+// runtime, via '-PreleaseTag=vX.Y.Z' (release.yml passes the pushed tag). arashi-render's own
+// gradle.properties version tracks independently of the shared repo tag, so it can't be used to
+// tell whether a given build is "the latest release" - the baked tag is what actually matches
+// what GitHub Releases reports. Local dev builds have no tag and report "dev" (see UpdateChecker).
+def versionResourcesDir = layout.buildDirectory.dir('generated/version-resources')
+
+tasks.register('generateVersionResource') {
+	def outputDir = versionResourcesDir
+	def tag = (findProperty('releaseTag') ?: 'dev').toString()
+	outputs.dir(outputDir)
+
+	doLast {
+		def file = outputDir.get().file('arashi-render-version.txt').asFile
+		file.parentFile.mkdirs()
+		file.text = tag
+	}
+}
+
+sourceSets.main.resources.srcDir(versionResourcesDir)
+tasks.named('processResources') { dependsOn tasks.named('generateVersionResource') }
 
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 21

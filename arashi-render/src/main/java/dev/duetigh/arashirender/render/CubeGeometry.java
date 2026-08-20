@@ -6,9 +6,9 @@ import org.lwjgl.system.MemoryUtil;
 
 import static org.lwjgl.opengl.GL33.*;
 
-/** Shared unit-cube vertex buffer (position + normal, 36 non-indexed vertices) reused by every {@link InstancedBatch}. */
+/** Shared unit-cube vertex buffer (position + normal + UV, 36 non-indexed vertices) reused by every {@link InstancedBatch}. */
 public final class CubeGeometry {
-	// 6 faces * 2 triangles * 3 vertices, each vertex = position(3) + normal(3).
+	// 6 faces * 2 triangles * 3 vertices, each vertex = position(3) + normal(3) + uv(2).
 	private static final float[] VERTICES = buildCube();
 
 	private final int vbo;
@@ -28,7 +28,7 @@ public final class CubeGeometry {
 	}
 
 	public int vertexCount() {
-		return VERTICES.length / 6;
+		return VERTICES.length / 8;
 	}
 
 	public void destroy() {
@@ -50,7 +50,11 @@ public final class CubeGeometry {
 				{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1},
 		};
 
-		float[] out = new float[6 * 6 * 6];
+		// Same (0,0)-(1,0)-(1,1)-(0,1) planar UV square on every face - one texture per block, not a
+		// full per-face atlas, so exact orientation per face doesn't matter for this v1.
+		float[][] faceUv = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+
+		float[] out = new float[6 * 6 * 8];
 		int i = 0;
 
 		for (int f = 0; f < 6; f++) {
@@ -66,6 +70,8 @@ public final class CubeGeometry {
 					out[i++] = n[0];
 					out[i++] = n[1];
 					out[i++] = n[2];
+					out[i++] = faceUv[c][0];
+					out[i++] = faceUv[c][1];
 				}
 			}
 		}

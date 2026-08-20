@@ -11,6 +11,8 @@ import dev.duetigh.arashirender.palette.ColorPalette;
 import dev.duetigh.arashirender.world.Filters;
 import dev.duetigh.arashirender.world.VoxelWorld;
 
+import static org.lwjgl.opengl.GL33.*;
+
 /**
  * Draws a {@link VoxelWorld} as one instanced-cube draw call per visible block type. Culls whole
  * blocks that are fully enclosed by other currently-visible blocks (not per-face culling - a known
@@ -21,32 +23,39 @@ public final class SceneRenderer {
 			#version 330 core
 			layout(location = 0) in vec3 aPos;
 			layout(location = 1) in vec3 aNormal;
-			layout(location = 2) in vec3 aInstancePos;
+			layout(location = 2) in vec2 aUV;
+			layout(location = 3) in vec3 aInstancePos;
 
 			uniform mat4 uView;
 			uniform mat4 uProj;
 
 			out vec3 vNormal;
+			out vec2 vUV;
 
 			void main() {
 			    vec3 worldPos = aPos + aInstancePos + vec3(0.5);
 			    gl_Position = uProj * uView * vec4(worldPos, 1.0);
 			    vNormal = aNormal;
+			    vUV = aUV;
 			}
 			""";
 
 	private static final String FRAGMENT_SOURCE = """
 			#version 330 core
 			in vec3 vNormal;
+			in vec2 vUV;
 			out vec4 fragColor;
 
 			uniform vec3 uColor;
 			uniform float uOpacity;
+			uniform sampler2D uTex;
+			uniform int uUseTexture;
 
 			void main() {
+			    vec3 base = uUseTexture == 1 ? texture(uTex, vUV).rgb : uColor;
 			    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
 			    float diffuse = 0.55 + 0.45 * max(dot(normalize(vNormal), lightDir), 0.0);
-			    fragColor = vec4(uColor * diffuse, uOpacity);
+			    fragColor = vec4(base * diffuse, uOpacity);
 			}
 			""";
 
@@ -59,7 +68,8 @@ public final class SceneRenderer {
 	};
 
 	/** Recomputes which blocks are drawn, grouped by type. Call whenever filters or the loaded scan change - not per frame. */
-	public void rebuild(VoxelWorld world, Filters filters, ColorPalette palette) {
+	public void rebuild(VoxelWorld world, Filters filters, ColorPalette palette, RenderMode mode,
+			Map<Integer, Integer> textureIdsByPaletteIndex) {
 		Map<Integer, List<float[]>> positionsByType = new HashMap<>();
 
 		for (Map.Entry<Long, Integer> entry : world.cells().entrySet()) {
@@ -104,6 +114,11 @@ public final class SceneRenderer {
 		for (Map.Entry<Integer, List<float[]>> entry : positionsByType.entrySet()) {
 			InstancedBatch batch = new InstancedBatch(cube);
 			batch.setColor(palette.colorFor(world.palette()[entry.getKey()]));
+
+			if (mode == RenderMode.TEXTURE) {
+				batch.setTexture(textureIdsByPaletteIndex.get(entry.getKey()));
+			}
+
 			batch.upload(entry.getValue());
 			batches.put(entry.getKey(), batch);
 		}
@@ -114,10 +129,22 @@ public final class SceneRenderer {
 		shader.setMatrix4("uView", view);
 		shader.setMatrix4("uProj", proj);
 		shader.setFloat("uOpacity", opacity);
+		shader.setInt("uTex", 0);
 
 		for (InstancedBatch batch : batches.values()) {
 			float[] color = batch.color();
 			shader.setVec3("uColor", color[0], color[1], color[2]);
+
+			Integer textureId = batch.textureId();
+
+			if (textureId != null) {
+				glActiveTexture(GL_TEXTURE0);
+				glBindTexture(GL_TEXTURE_2D, textureId);
+				shader.setInt("uUseTexture", 1);
+			} else {
+				shader.setInt("uUseTexture", 0);
+			}
+
 			batch.draw(cube);
 		}
 	}

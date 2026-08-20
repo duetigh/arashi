@@ -1,5 +1,6 @@
 package dev.duetigh.arashi.gui;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -21,7 +22,8 @@ import dev.duetigh.arashi.scan.ScanStore;
 
 /** Start/stop scanning, and browse, rename, delete, or copy previously saved scans. */
 public final class ScanBrowserScreen extends Screen {
-	private static final int ROW_HEIGHT = 24;
+	private static final int ROW_HEIGHT = 36;
+	private static final int ACTION_ROW_Y_OFFSET = 24;
 	private static final int SIZE_WARNING_BYTES = 300_000;
 	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 			.withZone(ZoneId.systemDefault());
@@ -209,11 +211,11 @@ public final class ScanBrowserScreen extends Screen {
 				if (pendingDelete()) {
 					String confirm = "Confirm delete?";
 					int confirmX = x + width - ACTION_WIDTH * 3 - 8;
-					graphics.text(ScanBrowserScreen.this.font, Component.literal(confirm), confirmX, y + 7, 0xFFFF5555, false);
+					graphics.text(ScanBrowserScreen.this.font, Component.literal(confirm), confirmX, y + ACTION_ROW_Y_OFFSET, 0xFFFF5555, false);
 				}
 
 				drawAction(graphics, actionX(0), y, "Rename", 0xFFFFFFFF);
-				drawAction(graphics, actionX(1), y, "Copy", entry.byteSize() > SIZE_WARNING_BYTES ? 0xFFFFAA55 : 0xFFFFFFFF);
+				drawAction(graphics, actionX(1), y, "Export", 0xFFFFFFFF);
 				drawAction(graphics, actionX(2), y, pendingDelete() ? "Confirm" : "Delete", 0xFFFF5555);
 			}
 
@@ -222,13 +224,18 @@ public final class ScanBrowserScreen extends Screen {
 			}
 
 			private void drawAction(GuiGraphicsExtractor graphics, int x, int y, String label, int color) {
-				graphics.text(ScanBrowserScreen.this.font, Component.literal(label), x, y + 7, color, false);
+				graphics.text(ScanBrowserScreen.this.font, Component.literal(label), x, y + ACTION_ROW_Y_OFFSET, color, false);
 			}
 
 			@Override
 			public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
 				int localX = (int) (event.x() - getX());
+				int localY = (int) (event.y() - getY());
 				int width = getWidth();
+
+				if (localY < ACTION_ROW_Y_OFFSET - 2) {
+					return true;
+				}
 
 				if (localX >= width - ACTION_WIDTH * 3 - 4 && localX < width - ACTION_WIDTH * 2 - 4) {
 					beginRename(entry.id());
@@ -236,7 +243,7 @@ public final class ScanBrowserScreen extends Screen {
 				}
 
 				if (localX >= width - ACTION_WIDTH * 2 - 4 && localX < width - ACTION_WIDTH - 4) {
-					this.copyToClipboard();
+					this.exportToFile();
 					return true;
 				}
 
@@ -248,10 +255,9 @@ public final class ScanBrowserScreen extends Screen {
 				return true;
 			}
 
-			private void copyToClipboard() {
-				String compact = store.compactString(entry.id());
-				Minecraft.getInstance().keyboardHandler.setClipboard(compact);
-				statusMessage = "Copied \"" + entry.name() + "\" (" + formatSize(compact.length()) + ") to clipboard.";
+			private void exportToFile() {
+				Path path = store.exportToFile(entry.id());
+				statusMessage = "Exported to " + path + " - open it in arashi-render.";
 			}
 
 			private void handleDeleteClick() {

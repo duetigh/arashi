@@ -1,5 +1,8 @@
 package dev.duetigh.arashirender;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
@@ -8,10 +11,16 @@ import imgui.ImGui;
 import imgui.gl3.ImGuiImplGl3;
 import imgui.glfw.ImGuiImplGlfw;
 
+import dev.duetigh.arashirender.input.KeyEdge;
 import dev.duetigh.arashirender.render.Camera;
+import dev.duetigh.arashirender.render.OutlineRenderer;
+import dev.duetigh.arashirender.render.RenderMode;
 import dev.duetigh.arashirender.render.SceneRenderer;
+import dev.duetigh.arashirender.ui.LibraryScreen;
 import dev.duetigh.arashirender.ui.UiPanel;
+import dev.duetigh.arashirender.update.UpdateChecker;
 import dev.duetigh.arashirender.world.Raycaster;
+import dev.duetigh.arashirender.world.VoxelWorld;
 
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL33.*;
@@ -54,9 +63,14 @@ public final class Main {
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 		AppState state = new AppState();
+		UpdateChecker.checkAsync(info -> state.availableUpdate = info);
 		SceneRenderer renderer = new SceneRenderer();
+		OutlineRenderer outline = new OutlineRenderer();
 		Camera camera = new Camera(new Vector3f(0, 80, 0));
 		UiPanel panel = new UiPanel();
+		LibraryScreen libraryScreen = new LibraryScreen();
+		KeyEdge keyEdge = new KeyEdge();
+		boolean leftMouseWasDown = false;
 
 		double lastTime = glfwGetTime();
 
@@ -71,20 +85,54 @@ public final class Main {
 			ImGui.newFrame();
 
 			boolean capturingMouse = ImGui.getIO().getWantCaptureMouse();
+			boolean capturingKeyboard = ImGui.getIO().getWantCaptureKeyboard();
 			double[] mouseX = new double[1];
 			double[] mouseY = new double[1];
 			glfwGetCursorPos(window, mouseX, mouseY);
 
-			if (!capturingMouse) {
-				camera.update(window, delta, mouseX[0], mouseY[0], ImGui.getIO().getMouseWheel());
-			} else {
-				camera.update(window, delta, mouseX[0], mouseY[0], 0);
-			}
-
+			boolean inViewer = state.screen == AppState.Screen.VIEWER && state.hasScan();
 			Raycaster.Hit hit = null;
 
-			if (state.hasScan() && !capturingMouse) {
-				hit = Raycaster.cast(state.world, state.filters, camera.eye(), camera.forward(), RAYCAST_MAX_DISTANCE);
+			if (inViewer) {
+				camera.update(window, delta, mouseX[0], mouseY[0], capturingMouse ? 0 : ImGui.getIO().getMouseWheel());
+
+				if (state.pendingCameraTarget != null) {
+					camera.setTarget(state.pendingCameraTarget);
+					state.pendingCameraTarget = null;
+				}
+
+				if (!capturingMouse) {
+					hit = Raycaster.cast(state.world, state.filters, camera.eye(), camera.forward(), RAYCAST_MAX_DISTANCE);
+				}
+
+				boolean leftMouseDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+
+				if (leftMouseDown && !leftMouseWasDown && !capturingMouse) {
+					state.selectedKey = hit != null ? VoxelWorld.pack(hit.x(), hit.y(), hit.z()) : null;
+				}
+
+				leftMouseWasDown = leftMouseDown;
+
+				if (!capturingKeyboard) {
+					if (keyEdge.pressed(window, GLFW_KEY_DELETE) || keyEdge.pressed(window, GLFW_KEY_BACKSPACE)) {
+						state.deleteSelected();
+					}
+
+					boolean ctrlZ = KeyEdge.ctrlDown(window) && keyEdge.pressed(window, GLFW_KEY_Z);
+					boolean ctrlY = KeyEdge.ctrlDown(window) && keyEdge.pressed(window, GLFW_KEY_Y);
+
+					if (ctrlZ) {
+						if (KeyEdge.shiftDown(window)) {
+							state.redo();
+						} else {
+							state.undo();
+						}
+					} else if (ctrlY) {
+						state.redo();
+					}
+				}
+			} else {
+				leftMouseWasDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 			}
 
 			int[] width = new int[1];
@@ -94,17 +142,36 @@ public final class Main {
 			glClearColor(0.08f, 0.09f, 0.11f, 1f);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-			if (state.needsRebuild && state.hasScan()) {
-				renderer.rebuild(state.world, state.filters, state.palette);
-				state.needsRebuild = false;
-			}
+			if (inViewer) {
+				if (state.needsRebuild) {
+					Map<Integer, Integer> textureIds = state.settings.renderMode == RenderMode.TEXTURE
+							? buildTextureIdMap(state)
+							: Map.of();
+					renderer.rebuild(state.world, state.filters, state.palette, state.settings.renderMode, textureIds);
+					state.needsRebuild = false;
+				}
 
-			if (state.hasScan()) {
 				float aspect = (float) width[0] / Math.max(1, height[0]);
-				renderer.render(camera.viewMatrix(), camera.projectionMatrix(aspect), state.filters.globalOpacity());
+				var view = camera.viewMatrix();
+				var proj = camera.projectionMatrix(aspect);
+				renderer.render(view, proj, state.filters.globalOpacity());
+
+				if (hit != null) {
+					outline.draw(view, proj, hit.x(), hit.y(), hit.z(), 1f, 1f, 1f, 0.35f);
+				}
+
+				if (state.selectedKey != null) {
+					long key = state.selectedKey;
+					outline.draw(view, proj, VoxelWorld.unpackX(key), VoxelWorld.unpackY(key), VoxelWorld.unpackZ(key),
+							1f, 0.82f, 0.2f, 0.9f);
+				}
 			}
 
-			panel.draw(state, hit);
+			if (state.screen == AppState.Screen.LIBRARY) {
+				libraryScreen.draw(state);
+			} else {
+				panel.draw(state, hit);
+			}
 
 			ImGui.render();
 			imGuiGl3.renderDrawData(ImGui.getDrawData());
@@ -112,11 +179,28 @@ public final class Main {
 			glfwSwapBuffers(window);
 		}
 
+		state.textureLoader.close();
+		outline.destroy();
 		renderer.destroy();
 		imGuiGl3.shutdown();
 		imGuiGlfw.shutdown();
 		ImGui.destroyContext();
 		glfwDestroyWindow(window);
 		glfwTerminate();
+	}
+
+	private static Map<Integer, Integer> buildTextureIdMap(AppState state) {
+		Map<Integer, Integer> ids = new HashMap<>();
+		String[] palette = state.world.palette();
+
+		for (int i = 0; i < palette.length; i++) {
+			Integer textureId = state.textureLoader.textureIdFor(palette[i]);
+
+			if (textureId != null) {
+				ids.put(i, textureId);
+			}
+		}
+
+		return ids;
 	}
 }

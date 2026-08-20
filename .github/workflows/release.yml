@@ -8,6 +8,11 @@
 # once on windows-latest (.exe, needs WiX Toolset for the installer type) and once on
 # macos-latest (.dmg, no extra tooling needed) - both after release-mod has created the release,
 # so they only need to attach assets to it rather than race to create it.
+#
+# -PreleaseTag bakes the pushed tag into the installer (see build.gradle's generateVersionResource)
+# so arashi-render's own in-app UpdateChecker can tell it's running the latest release - it can't
+# use arashi-render's gradle.properties version for that, since that tracks independently of the
+# tag this whole release is published under.
 name: release
 on:
   push:
@@ -62,7 +67,7 @@ jobs:
         # --type exe) but doesn't always put it on PATH by default.
         run: echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: package installer
-        run: ./gradlew jpackageApp
+        run: ./gradlew jpackageApp -PreleaseTag=${{ github.ref_name }}
       - name: attach to release
         uses: softprops/action-gh-release@v2
         with:
@@ -87,7 +92,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
       - name: package installer
-        run: ./gradlew jpackageApp
+        run: ./gradlew jpackageApp -PreleaseTag=${{ github.ref_name }}
       - name: attach to release
         uses: softprops/action-gh-release@v2
         with:

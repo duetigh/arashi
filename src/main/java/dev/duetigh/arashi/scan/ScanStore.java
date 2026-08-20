@@ -120,6 +120,32 @@ public final class ScanStore {
 		return ScanEncoder.toCompactString(compressedBytes(id));
 	}
 
+	/**
+	 * Writes a scan's compact string to a standalone {@code .txt} file under {@code config/arashi/scans/exports/}
+	 * so it can be handed to arashi-render's "Open scan file..." picker instead of the clipboard - large scans
+	 * (megabytes of base64) can hang or crash apps that treat a paste as ordinary text. Returns the written path.
+	 */
+	public Path exportToFile(String id) {
+		ScanEntry entry = find(id).orElseThrow(() -> new IllegalArgumentException("Unknown scan id: " + id));
+		Path exportsDir = dir.resolve("exports");
+		String safeName = entry.name().replaceAll("[^a-zA-Z0-9 _-]", "_").strip();
+
+		if (safeName.isEmpty()) {
+			safeName = "scan";
+		}
+
+		Path target = exportsDir.resolve(safeName + ".txt");
+
+		try {
+			Files.createDirectories(exportsDir);
+			Files.writeString(target, compactString(id), StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to export scan to " + target, e);
+		}
+
+		return target;
+	}
+
 	private java.util.Optional<ScanEntry> find(String id) {
 		return entries.stream().filter(e -> e.id().equals(id)).findFirst();
 	}

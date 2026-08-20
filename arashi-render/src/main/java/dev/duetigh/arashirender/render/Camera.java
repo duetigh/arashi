@@ -43,9 +43,24 @@ public final class Camera {
 		}
 
 		Vector3f forward = forward();
+		Vector3f right = new Vector3f(forward).cross(new Vector3f(0, 1, 0)).normalize();
+
+		float arrowMove = flySpeed * deltaSeconds;
+
+		if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+			target.fma(-arrowMove, right);
+		}
+		if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+			target.fma(arrowMove, right);
+		}
+		if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+			target.fma(arrowMove, forward);
+		}
+		if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+			target.fma(-arrowMove, forward);
+		}
 
 		if (rightDown) {
-			Vector3f right = new Vector3f(forward).cross(new Vector3f(0, 1, 0)).normalize();
 			Vector3f up = new Vector3f(0, 1, 0);
 			float move = flySpeed * deltaSeconds;
 
@@ -74,6 +89,10 @@ public final class Camera {
 		} else if (scrollDelta != 0) {
 			distance = Math.max(1.0f, distance * (float) Math.pow(0.9, scrollDelta));
 		}
+	}
+
+	public void setTarget(Vector3f newTarget) {
+		target.set(newTarget);
 	}
 
 	public Vector3f eye() {
