@@ -48,8 +48,12 @@ public final class BlockSelectScreen extends Screen {
 
 	private final ArashiConfig config;
 	private final BlockScanner scanner;
+	private final dev.duetigh.arashi.scan.ScanController scanController;
+	private final dev.duetigh.arashi.scan.ScanStore scanStore;
 	private final KeyMapping openScannerKey;
 	private final KeyMapping toggleEspKey;
+	private final KeyMapping toggleScanKey;
+	private final KeyMapping openScanBrowserKey;
 	private final List<Identifier> allBlockIds;
 
 	private ViewMode viewMode = ViewMode.ALL;
@@ -67,12 +71,18 @@ public final class BlockSelectScreen extends Screen {
 	private int panelSwatchHeight;
 	private int panelBottom;
 
-	public BlockSelectScreen(ArashiConfig config, BlockScanner scanner, KeyMapping openScannerKey, KeyMapping toggleEspKey) {
+	public BlockSelectScreen(ArashiConfig config, BlockScanner scanner, dev.duetigh.arashi.scan.ScanController scanController,
+			dev.duetigh.arashi.scan.ScanStore scanStore, KeyMapping openScannerKey, KeyMapping toggleEspKey,
+			KeyMapping toggleScanKey, KeyMapping openScanBrowserKey) {
 		super(Component.literal("Arashi - Block Scanner"));
 		this.config = config;
 		this.scanner = scanner;
+		this.scanController = scanController;
+		this.scanStore = scanStore;
 		this.openScannerKey = openScannerKey;
 		this.toggleEspKey = toggleEspKey;
+		this.toggleScanKey = toggleScanKey;
+		this.openScanBrowserKey = openScanBrowserKey;
 		this.allBlockIds = BuiltInRegistries.BLOCK.stream()
 				.map(BuiltInRegistries.BLOCK::getKey)
 				.sorted()
@@ -108,9 +118,10 @@ public final class BlockSelectScreen extends Screen {
 
 		int buttonWidth = 90;
 		int gap = 5;
-		int startX = this.width / 2 - (buttonWidth * 3 + gap * 2) / 2;
+		int startX = this.width / 2 - (buttonWidth * 4 + gap * 3) / 2;
 
-		this.addRenderableWidget(Button.builder(Component.literal("Settings"), b -> this.minecraft.setScreen(new ArashiSettingsScreen(config, openScannerKey, toggleEspKey)))
+		this.addRenderableWidget(Button.builder(Component.literal("Settings"), b -> this.minecraft.setScreen(
+				new ArashiSettingsScreen(config, openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey)))
 				.pos(startX, this.height - 26)
 				.size(buttonWidth, 20)
 				.build());
@@ -120,8 +131,13 @@ public final class BlockSelectScreen extends Screen {
 			b.setMessage(debugLabel());
 		}).pos(startX + buttonWidth + gap, this.height - 26).size(buttonWidth, 20).build());
 
-		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
+		this.addRenderableWidget(Button.builder(Component.literal("Scans"), b -> this.minecraft.setScreen(new ScanBrowserScreen(this, scanController, scanStore)))
 				.pos(startX + (buttonWidth + gap) * 2, this.height - 26)
+				.size(buttonWidth, 20)
+				.build());
+
+		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
+				.pos(startX + (buttonWidth + gap) * 3, this.height - 26)
 				.size(buttonWidth, 20)
 				.build());
 

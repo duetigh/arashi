@@ -28,3 +28,33 @@ jobs:
         with:
           name: arashi
           path: build/libs/arashi.jar
+
+  build-render:
+    # arashi-render is a standalone Gradle project (own wrapper, own settings.gradle) deliberately
+    # not included from the mod's build - it's a separate desktop app, not a Fabric mod artifact.
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: arashi-render
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+      - name: build
+        # Not `./gradlew build`: Shadow 8.3.5's distribution-archive tasks (shadowDistTar/Zip)
+        # don't support the modern `application { mainClass = ... }` API and fail to configure -
+        # harmless since we only ship the shadow jar and jpackage installers, never those archives.
+        run: ./gradlew shadowJar
+      - name: capture build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: arashi-render
+          path: arashi-render/build/libs/arashi-render.jar

@@ -1,6 +1,13 @@
-# Builds arashi.jar and attaches it to the GitHub Release for the pushed tag.
-# The in-game auto-updater (UpdateChecker) reads this release's tag and downloads
-# this exact asset name, so it must stay "arashi.jar" on every release.
+# Builds arashi.jar (the Fabric mod) and native arashi-render installers, then attaches all of
+# them to the GitHub Release for the pushed tag.
+#
+# The in-game auto-updater (UpdateChecker) reads this release's tag and downloads this exact
+# asset name, so arashi.jar must stay "arashi.jar" on every release.
+#
+# arashi-render's installer is built natively per OS (jpackage cannot cross-compile), so it runs
+# once on windows-latest (.exe, needs WiX Toolset for the installer type) and once on
+# macos-latest (.dmg, no extra tooling needed) - both after release-mod has created the release,
+# so they only need to attach assets to it rather than race to create it.
 name: release
 on:
   push:
@@ -8,7 +15,7 @@ on:
       - 'v*.*.*'
 
 jobs:
-  release:
+  release-mod:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -31,3 +38,57 @@ jobs:
         with:
           files: build/libs/arashi.jar
           generate_release_notes: true
+
+  release-render-windows:
+    needs: release-mod
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: arashi-render
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: ensure wix toolset is on PATH
+        # GitHub's windows-latest runner ships WiX Toolset 3.14 preinstalled (needed by jpackage's
+        # --type exe) but doesn't always put it on PATH by default.
+        run: echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: package installer
+        run: ./gradlew jpackageApp
+      - name: attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: arashi-render/build/jpackage/*.exe
+
+  release-render-macos:
+    needs: release-mod
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: arashi-render
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v6
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: package installer
+        run: ./gradlew jpackageApp
+      - name: attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: arashi-render/build/jpackage/*.dmg

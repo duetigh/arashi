@@ -1,5 +1,7 @@
 {
   "key.categories.arashi.main": "Arashi",
   "key.arashi.open_scanner": "Open Block Scanner",
-  "key.arashi.toggle_esp": "Toggle ESP"
+  "key.arashi.toggle_esp": "Toggle ESP",
+  "key.arashi.toggle_scan": "Toggle Scan",
+  "key.arashi.open_scan_browser": "Open Scan Browser"
 }

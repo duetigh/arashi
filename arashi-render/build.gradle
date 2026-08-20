@@ -1,0 +1,123 @@
+import org.gradle.internal.os.OperatingSystem
+
+plugins {
+	id 'application'
+	id 'com.gradleup.shadow' version '8.3.5'
+}
+
+repositories {
+	mavenCentral()
+}
+
+// LWJGL/imgui-java ship separate native jars per OS/arch; bundling all of them into the runtime
+// classpath lets LWJGL pick the right one at startup on any of Windows/macOS(Intel/ARM), at the
+// cost of a larger fat jar. That's an acceptable tradeoff for a small desktop tool like this.
+def nativesClassifiers = ['natives-windows', 'natives-macos', 'natives-macos-arm64']
+
+dependencies {
+	implementation platform("org.lwjgl:lwjgl-bom:${lwjglVersion}")
+	implementation 'org.lwjgl:lwjgl'
+	implementation 'org.lwjgl:lwjgl-glfw'
+	implementation 'org.lwjgl:lwjgl-opengl'
+	implementation 'org.lwjgl:lwjgl-tinyfd' // native open/save file dialogs
+	nativesClassifiers.each { classifier ->
+		runtimeOnly "org.lwjgl:lwjgl::$classifier"
+		runtimeOnly "org.lwjgl:lwjgl-glfw::$classifier"
+		runtimeOnly "org.lwjgl:lwjgl-opengl::$classifier"
+		runtimeOnly "org.lwjgl:lwjgl-tinyfd::$classifier"
+	}
+
+	implementation "org.joml:joml:${jomlVersion}"
+
+	implementation "io.github.spair:imgui-java-binding:${imguiVersion}"
+	implementation "io.github.spair:imgui-java-lwjgl3:${imguiVersion}"
+	runtimeOnly "io.github.spair:imgui-java-natives-windows:${imguiVersion}"
+	runtimeOnly "io.github.spair:imgui-java-natives-macos:${imguiVersion}"
+
+	implementation "com.google.code.gson:gson:${gsonVersion}"
+}
+
+application {
+	mainClass = project.mainClass
+
+	// GLFW requires the main thread to be the process's first thread on macOS.
+	if (OperatingSystem.current().isMacOsX()) {
+		applicationDefaultJvmArgs = ['-XstartOnFirstThread']
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 21
+}
+
+tasks.named('shadowJar') {
+	archiveBaseName = 'arashi-render'
+	archiveClassifier = ''
+	archiveVersion = ''
+}
+
+// jpackage only bundles the jars present in --input, so the fat jar is copied alone into its own
+// directory first - otherwise the plain (non-shadow) jar task's output would also be picked up and
+// added to the app's classpath for no reason.
+tasks.register('jpackageInput', Copy) {
+	dependsOn tasks.named('shadowJar')
+	from tasks.named('shadowJar')
+	into layout.buildDirectory.dir('jpackage-input')
+}
+
+// Produces a native installer via the jpackage tool bundled with the JDK: a .exe on Windows
+// (requires WiX Toolset v3 on PATH) or a .dmg on macOS (no extra tooling needed). This only
+// packages for whichever OS it's run on - jpackage cannot cross-compile - so CI builds it once
+// per target OS and uploads each result to the same release.
+tasks.register('jpackageApp', Exec) {
+	dependsOn tasks.named('jpackageInput')
+	group = 'distribution'
+	description = 'Packages a native installer (exe on Windows, dmg on macOS) via jpackage.'
+
+	def javaHome = System.getProperty('java.home')
+	def jpackageBin = OperatingSystem.current().isWindows() ? 'jpackage.exe' : 'jpackage'
+	def destDir = layout.buildDirectory.dir('jpackage').get().asFile
+	def inputDir = layout.buildDirectory.dir('jpackage-input').get().asFile
+	def mainJarName = tasks.named('shadowJar').get().archiveFileName.get()
+
+	doFirst {
+		delete destDir
+		destDir.mkdirs()
+	}
+
+	executable "${javaHome}/bin/${jpackageBin}"
+
+	def installerType = OperatingSystem.current().isWindows() ? 'exe'
+			: OperatingSystem.current().isMacOsX() ? 'dmg'
+			: 'app-image'
+
+	// jpackage's installer version (macOS CFBundleVersion / Windows MSI ProductVersion) must start
+	// with a positive integer, which the project's own pre-1.0 version (e.g. "0.1.0") fails - swap
+	// the leading 0 for a 1 so the installer version stays traceable to the project version.
+	def rawVersion = project.version.toString()
+	def packageVersion = rawVersion.startsWith('0.') ? '1.' + rawVersion.substring(2) : rawVersion
+
+	def packageArgs = [
+			'--input', inputDir.absolutePath,
+			'--main-jar', mainJarName,
+			'--main-class', project.mainClass,
+			'--name', 'ArashiRender',
+			'--app-version', packageVersion,
+			'--vendor', 'duetigh',
+			'--description', 'Arashi scan 3D viewer',
+			'--dest', destDir.absolutePath,
+			'--type', installerType,
+	]
+
+	// GLFW requires the main thread to be the process's first thread on macOS; bake it into the
+	// packaged launcher's default JVM args since end users won't pass it manually.
+	if (OperatingSystem.current().isMacOsX()) {
+		packageArgs += ['--java-options', '-XstartOnFirstThread']
+	}
+
+	if (OperatingSystem.current().isWindows()) {
+		packageArgs += ['--win-shortcut', '--win-dir-chooser', '--win-menu']
+	}
+
+	args = packageArgs
+}

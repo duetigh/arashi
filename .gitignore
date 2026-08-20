@@ -28,6 +28,10 @@ bin/
 
 *.DS_Store
 
+# arashi-render (imgui window layout, regenerated on each run)
+
+imgui.ini
+
 # fabric
 
 run/

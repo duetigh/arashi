@@ -1,0 +1,3 @@
+// Standalone desktop viewer app, built and run independently of the Fabric mod in ../arashi.
+// Deliberately not included from any other project's settings.gradle.
+rootProject.name = 'arashi-render'

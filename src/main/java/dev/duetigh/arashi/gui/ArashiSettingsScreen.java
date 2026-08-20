@@ -26,16 +26,23 @@ public final class ArashiSettingsScreen extends Screen {
 	private final ArashiConfig config;
 	private final KeyMapping openScannerKey;
 	private final KeyMapping toggleEspKey;
+	private final KeyMapping toggleScanKey;
+	private final KeyMapping openScanBrowserKey;
 
 	private Button openScannerKeyButton;
 	private Button toggleEspKeyButton;
+	private Button toggleScanKeyButton;
+	private Button openScanBrowserKeyButton;
 	private KeyMapping listeningFor;
 
-	public ArashiSettingsScreen(ArashiConfig config, KeyMapping openScannerKey, KeyMapping toggleEspKey) {
+	public ArashiSettingsScreen(ArashiConfig config, KeyMapping openScannerKey, KeyMapping toggleEspKey,
+			KeyMapping toggleScanKey, KeyMapping openScanBrowserKey) {
 		super(Component.literal("Arashi - Settings"));
 		this.config = config;
 		this.openScannerKey = openScannerKey;
 		this.toggleEspKey = toggleEspKey;
+		this.toggleScanKey = toggleScanKey;
+		this.openScanBrowserKey = openScanBrowserKey;
 	}
 
 	@Override
@@ -91,6 +98,18 @@ public final class ArashiSettingsScreen extends Screen {
 				.build());
 		y += SPACING;
 
+		toggleScanKeyButton = this.addRenderableWidget(Button.builder(keyLabel("Toggle Scan", toggleScanKey), b -> startListening(toggleScanKey))
+				.pos(x, y)
+				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
+				.build());
+		y += SPACING;
+
+		openScanBrowserKeyButton = this.addRenderableWidget(Button.builder(keyLabel("Open Scans", openScanBrowserKey), b -> startListening(openScanBrowserKey))
+				.pos(x, y)
+				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
+				.build());
+		y += SPACING;
+
 		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
 				.pos(x, y)
 				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
@@ -105,6 +124,8 @@ public final class ArashiSettingsScreen extends Screen {
 	private void refreshKeyLabels() {
 		openScannerKeyButton.setMessage(keyLabel("Open GUI", openScannerKey));
 		toggleEspKeyButton.setMessage(keyLabel("Toggle ESP", toggleEspKey));
+		toggleScanKeyButton.setMessage(keyLabel("Toggle Scan", toggleScanKey));
+		openScanBrowserKeyButton.setMessage(keyLabel("Open Scans", openScanBrowserKey));
 	}
 
 	private Component keyLabel(String action, KeyMapping mapping) {

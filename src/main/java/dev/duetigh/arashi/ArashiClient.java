@@ -44,6 +44,10 @@ import dev.duetigh.arashi.party.PartyManager;
 import dev.duetigh.arashi.render.DebugHudRenderer;
 import dev.duetigh.arashi.render.EspRenderer;
 import dev.duetigh.arashi.render.LobbySearchedHudRenderer;
+import dev.duetigh.arashi.scan.ScanController;
+import dev.duetigh.arashi.scan.ScanEntry;
+import dev.duetigh.arashi.scan.ScanStore;
+import dev.duetigh.arashi.gui.ScanBrowserScreen;
 import dev.duetigh.arashi.scanner.BlockScanner;
 import dev.duetigh.arashi.scanner.VeinMatch;
 import dev.duetigh.arashi.text.GradientText;
@@ -60,11 +64,15 @@ public final class ArashiClient implements ClientModInitializer {
 
 	private ArashiConfig config;
 	private BlockScanner scanner;
+	private ScanController scanController;
+	private ScanStore scanStore;
 	private HypixelWidgetReader hypixelReader;
 	private LobbyTracker lobbyTracker;
 	private PartyManager party;
 	private KeyMapping openScannerKey;
 	private KeyMapping toggleEspKey;
+	private KeyMapping toggleScanKey;
+	private KeyMapping openScanBrowserKey;
 	private boolean hasSentJoinMessage;
 	private boolean scanningSuppressed;
 
@@ -74,6 +82,9 @@ public final class ArashiClient implements ClientModInitializer {
 		scanner = new BlockScanner();
 		scanner.setTrackedBlockIds(config.trackedBlockIds());
 		scanner.setNewMatchListener(this::onNewMatches);
+		scanStore = ScanStore.load();
+		scanController = new ScanController(scanner, scanStore);
+		scanController.setOnStop(this::onScanAutoStopped);
 		hypixelReader = new HypixelWidgetReader();
 		lobbyTracker = new LobbyTracker();
 		party = new PartyManager(lobbyTracker);
@@ -83,7 +94,9 @@ public final class ArashiClient implements ClientModInitializer {
 		new LobbySearchedHudRenderer(config, lobbyTracker).register();
 
 		ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> scanner.onChunkLoad(level, chunk));
+		ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> scanController.onChunkLoad(level, chunk));
 		ClientChunkEvents.CHUNK_UNLOAD.register((level, chunk) -> scanner.onChunkUnload(chunk));
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> scanController.autoStop("disconnect"));
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
 			scanner.clear();
 
@@ -126,17 +139,68 @@ public final class ArashiClient implements ClientModInitializer {
 				"key.arashi.open_scanner", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, category));
 		toggleEspKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
 				"key.arashi.toggle_esp", InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), category));
+		toggleScanKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+				"key.arashi.toggle_scan", InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), category));
+		openScanBrowserKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+				"key.arashi.open_scan_browser", InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), category));
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (openScannerKey.consumeClick()) {
-				client.setScreen(new BlockSelectScreen(config, scanner, openScannerKey, toggleEspKey));
+				client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore, openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey));
 			}
 
 			while (toggleEspKey.consumeClick()) {
 				config.setEspEnabled(!config.espEnabled());
 				config.save();
 			}
+
+			while (toggleScanKey.consumeClick()) {
+				toggleScan();
+			}
+
+			while (openScanBrowserKey.consumeClick()) {
+				client.setScreen(new ScanBrowserScreen(client.screen, scanController, scanStore));
+			}
 		});
+	}
+
+	private void toggleScanIfInactive() {
+		if (!scanController.isActive()) {
+			toggleScan();
+		}
+	}
+
+	private void toggleScanIfActive() {
+		if (scanController.isActive()) {
+			toggleScan();
+		}
+	}
+
+	private void toggleScan() {
+		Minecraft client = Minecraft.getInstance();
+
+		if (scanController.isActive()) {
+			ScanEntry entry = scanController.stop();
+
+			if (client.player != null && entry != null) {
+				client.player.sendSystemMessage(prefixed("Saved scan \"" + entry.name() + "\" (" + entry.chunkCount() + " chunks)."));
+			}
+		} else if (client.level != null) {
+			scanController.start(client.level);
+
+			if (client.player != null) {
+				client.player.sendSystemMessage(prefixed("Scan started."));
+			}
+		}
+	}
+
+	private void onScanAutoStopped(ScanEntry entry, String reason) {
+		Minecraft client = Minecraft.getInstance();
+
+		if (client.player != null) {
+			client.player.sendSystemMessage(prefixed("Scan auto-stopped (" + reason + ") and saved as \""
+					+ entry.name() + "\" (" + entry.chunkCount() + " chunks)."));
+		}
 	}
 
 	private void registerIncrementalRescan() {
@@ -150,6 +214,7 @@ public final class ArashiClient implements ClientModInitializer {
 
 			if (client.player.tickCount % 20 == 0) {
 				scanner.rescanChunkAt(client.player.blockPosition());
+				scanController.checkDimension(client.level);
 
 				hypixelReader.tick(client.level);
 				hypixelReader.lobbyId().ifPresent(lobbyTracker::onLobbyObserved);
@@ -175,13 +240,27 @@ public final class ArashiClient implements ClientModInitializer {
 				ClientCommands.literal("arashi")
 						.executes(context -> {
 							Minecraft client = Minecraft.getInstance();
-							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner, openScannerKey, toggleEspKey)));
+							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore, openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey)));
 							return 1;
 						})
 						.then(ClientCommands.literal("update").executes(context -> {
 							requestUpdateDownload();
 							return 1;
 						}))
+						.then(ClientCommands.literal("scan")
+								.executes(context -> {
+									Minecraft client = Minecraft.getInstance();
+									client.execute(() -> client.setScreen(new ScanBrowserScreen(client.screen, scanController, scanStore)));
+									return 1;
+								})
+								.then(ClientCommands.literal("start").executes(context -> {
+									Minecraft.getInstance().execute(this::toggleScanIfInactive);
+									return 1;
+								}))
+								.then(ClientCommands.literal("stop").executes(context -> {
+									Minecraft.getInstance().execute(this::toggleScanIfActive);
+									return 1;
+								})))
 						.then(ClientCommands.literal("party")
 								.executes(context -> {
 									Minecraft client = Minecraft.getInstance();

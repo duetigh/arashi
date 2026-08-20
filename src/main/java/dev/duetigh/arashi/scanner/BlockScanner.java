@@ -57,6 +57,11 @@ public final class BlockScanner {
 		rescanAllLoaded();
 	}
 
+	/** All chunks currently loaded client-side. There's no public API for this on {@code ClientChunkCache}, so callers that need it (e.g. seeding a scan with already-loaded chunks) piggyback on this bookkeeping. */
+	public Collection<LevelChunk> loadedChunks() {
+		return loadedChunks.values();
+	}
+
 	public void onChunkLoad(ClientLevel level, LevelChunk chunk) {
 		currentLevel = level;
 		loadedChunks.put(chunk.getPos(), chunk);
