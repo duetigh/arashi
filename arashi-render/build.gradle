@@ -144,4 +144,13 @@ tasks.register('jpackageApp', Exec) {
 	}
 
 	args = packageArgs
+
+	// jpackage always names the installer "<name>-<version>.<ext>", but the release workflow and
+	// the in-game/arashi-render updaters both expect a stable, unversioned asset name - so rename
+	// jpackage's output to "arashi-render.<ext>" once it's done.
+	doLast {
+		def installerFile = destDir.listFiles({ f -> f.name.endsWith(".${installerType}") } as FileFilter)[0]
+		def stableName = new File(destDir, "arashi-render.${installerType}")
+		installerFile.renameTo(stableName)
+	}
 }
