@@ -67,7 +67,9 @@ jobs:
         # --type exe) but doesn't always put it on PATH by default.
         run: echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: package installer
-        run: ./gradlew jpackageApp -PreleaseTag=${{ github.ref_name }}
+        env:
+          ORG_GRADLE_PROJECT_releaseTag: ${{ github.ref_name }}
+        run: ./gradlew jpackageApp
       - name: attach to release
         uses: softprops/action-gh-release@v2
         with:
