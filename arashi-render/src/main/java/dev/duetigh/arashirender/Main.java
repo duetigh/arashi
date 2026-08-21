@@ -71,6 +71,7 @@ public final class Main {
 		LibraryScreen libraryScreen = new LibraryScreen();
 		KeyEdge keyEdge = new KeyEdge();
 		boolean leftMouseWasDown = false;
+		boolean cameraLocked = false;
 
 		double lastTime = glfwGetTime();
 
@@ -93,11 +94,17 @@ public final class Main {
 			boolean inViewer = state.screen == AppState.Screen.VIEWER && state.hasScan();
 			Raycaster.Hit hit = null;
 
+			if (!inViewer && cameraLocked) {
+				cameraLocked = false;
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+				camera.resetMouseTracking();
+			}
+
 			if (inViewer) {
-				camera.update(window, delta, mouseX[0], mouseY[0], capturingMouse ? 0 : ImGui.getIO().getMouseWheel());
+				camera.update(window, delta, mouseX[0], mouseY[0], capturingMouse ? 0 : ImGui.getIO().getMouseWheel(), cameraLocked);
 
 				if (state.pendingCameraTarget != null) {
-					camera.setTarget(state.pendingCameraTarget);
+					camera.frame(state.pendingCameraTarget);
 					state.pendingCameraTarget = null;
 				}
 
@@ -114,6 +121,16 @@ public final class Main {
 				leftMouseWasDown = leftMouseDown;
 
 				if (!capturingKeyboard) {
+					if (keyEdge.pressed(window, GLFW_KEY_L)) {
+						cameraLocked = !cameraLocked;
+						glfwSetInputMode(window, GLFW_CURSOR, cameraLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+						camera.resetMouseTracking();
+					} else if (cameraLocked && keyEdge.pressed(window, GLFW_KEY_ESCAPE)) {
+						cameraLocked = false;
+						glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+						camera.resetMouseTracking();
+					}
+
 					if (keyEdge.pressed(window, GLFW_KEY_DELETE) || keyEdge.pressed(window, GLFW_KEY_BACKSPACE)) {
 						state.deleteSelected();
 					}
