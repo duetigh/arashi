@@ -12,7 +12,7 @@ import java.util.zip.Inflater;
 /** Decodes the Arashi "ARSH" compact scan format (magic + varint/RLE section runs, zlib-deflated, Base64 URL-safe no-pad). */
 public final class ScanFormatDecoder {
 	private static final byte[] MAGIC = {'A', 'R', 'S', 'H'};
-	private static final int SUPPORTED_VERSION = 1;
+	private static final int SUPPORTED_VERSION = 2;
 
 	private ScanFormatDecoder() {
 	}
@@ -20,6 +20,11 @@ public final class ScanFormatDecoder {
 	public static DecodedScan decode(String compactString) {
 		byte[] compressed = Base64.getUrlDecoder().decode(compactString.strip());
 		return decode(inflate(compressed));
+	}
+
+	/** Entry point for the raw-binary (non-base64) export path: {@code compressedPayload} is already-deflated bytes, no base64 involved. */
+	public static DecodedScan decodeCompressed(byte[] compressedPayload) {
+		return decode(inflate(compressedPayload));
 	}
 
 	public static DecodedScan decode(byte[] rawPayload) {
@@ -36,10 +41,15 @@ public final class ScanFormatDecoder {
 					+ " (this build of arashi-render only supports version " + SUPPORTED_VERSION + ")");
 		}
 
+		int captureModeId = cursor.readU8();
+		CaptureMode captureMode = CaptureMode.fromWireId(captureModeId);
+		DecodedScan.CaptureParams captureParams = readCaptureParams(cursor, captureMode);
+
 		String dimensionId = cursor.readStr();
 		int minY = cursor.readI32();
 		int maxY = cursor.readI32();
-		int sectionCount = (maxY - minY) / 16;
+		int columnHeight = maxY - minY;
+		int expectedBlocksPerChunk = 16 * 16 * columnHeight;
 
 		int paletteCount = cursor.readVarInt();
 		List<String> palette = new ArrayList<>(paletteCount);
@@ -53,32 +63,48 @@ public final class ScanFormatDecoder {
 		for (int c = 0; c < chunkCount; c++) {
 			int chunkX = cursor.readI32();
 			int chunkZ = cursor.readI32();
-			List<List<DecodedScan.Run>> sections = new ArrayList<>(sectionCount);
 
-			for (int s = 0; s < sectionCount; s++) {
-				int runCount = cursor.readVarInt();
-				List<DecodedScan.Run> runs = new ArrayList<>(runCount);
-				int total = 0;
+			int runCount = cursor.readVarInt();
+			List<DecodedScan.Run> runs = new ArrayList<>(runCount);
+			int total = 0;
 
-				for (int r = 0; r < runCount; r++) {
-					int paletteIndex = cursor.readVarInt();
-					int length = cursor.readVarInt();
-					runs.add(new DecodedScan.Run(paletteIndex, length));
-					total += length;
-				}
-
-				if (total != 4096) {
-					throw new IllegalArgumentException("Corrupt/truncated scan data: section run lengths summed to "
-							+ total + ", expected 4096 (chunk " + chunkX + "," + chunkZ + " section " + s + ")");
-				}
-
-				sections.add(runs);
+			for (int r = 0; r < runCount; r++) {
+				int paletteIndex = cursor.readVarInt();
+				int length = cursor.readVarInt();
+				runs.add(new DecodedScan.Run(paletteIndex, length));
+				total += length;
 			}
 
-			chunks.add(new DecodedScan.DecodedChunk(chunkX, chunkZ, sections));
+			if (total != expectedBlocksPerChunk) {
+				throw new IllegalArgumentException("Corrupt/truncated scan data: chunk run lengths summed to "
+						+ total + ", expected " + expectedBlocksPerChunk + " (chunk " + chunkX + "," + chunkZ + ")");
+			}
+
+			chunks.add(new DecodedScan.DecodedChunk(chunkX, chunkZ, runs));
 		}
 
-		return new DecodedScan(dimensionId, minY, maxY, palette, chunks);
+		return new DecodedScan(dimensionId, minY, maxY, captureMode, captureParams, palette, chunks);
+	}
+
+	private static DecodedScan.CaptureParams readCaptureParams(Cursor cursor, CaptureMode mode) {
+		return switch (mode) {
+			case EVERYTHING -> null;
+			case WHITELIST -> {
+				int count = cursor.readVarInt();
+				List<String> blocks = new ArrayList<>(count);
+
+				for (int i = 0; i < count; i++) {
+					blocks.add(cursor.readStr());
+				}
+
+				yield new DecodedScan.WhitelistParams(blocks);
+			}
+			case ISOLATE -> {
+				String seed = cursor.readStr();
+				int connectivity = cursor.readU8();
+				yield new DecodedScan.IsolateParams(seed, connectivity);
+			}
+		};
 	}
 
 	private static byte[] inflate(byte[] compressed) {

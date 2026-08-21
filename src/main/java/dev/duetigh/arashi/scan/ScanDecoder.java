@@ -40,10 +40,15 @@ public final class ScanDecoder {
 			throw new IllegalArgumentException("Unsupported scan format version: " + version);
 		}
 
+		int captureModeId = cursor.readU8();
+		CaptureMode captureMode = CaptureMode.fromWireId(captureModeId);
+		DecodedScan.DecodedCaptureParams captureParams = readCaptureParams(cursor, captureMode);
+
 		String dimensionId = cursor.readStr();
 		int minY = cursor.readI32();
 		int maxY = cursor.readI32();
-		int sectionCount = (maxY - minY) / 16;
+		int columnHeight = maxY - minY;
+		int expectedBlocksPerChunk = 16 * 16 * columnHeight;
 
 		int paletteCount = cursor.readVarInt();
 		List<String> palette = new ArrayList<>(paletteCount);
@@ -57,32 +62,48 @@ public final class ScanDecoder {
 		for (int c = 0; c < chunkCount; c++) {
 			int chunkX = cursor.readI32();
 			int chunkZ = cursor.readI32();
-			List<List<DecodedScan.DecodedRun>> sections = new ArrayList<>(sectionCount);
 
-			for (int s = 0; s < sectionCount; s++) {
-				int runCount = cursor.readVarInt();
-				List<DecodedScan.DecodedRun> runs = new ArrayList<>(runCount);
-				int total = 0;
+			int runCount = cursor.readVarInt();
+			List<DecodedScan.DecodedRun> runs = new ArrayList<>(runCount);
+			int total = 0;
 
-				for (int r = 0; r < runCount; r++) {
-					int paletteIndex = cursor.readVarInt();
-					int length = cursor.readVarInt();
-					runs.add(new DecodedScan.DecodedRun(paletteIndex, length));
-					total += length;
-				}
-
-				if (total != 4096) {
-					throw new IllegalArgumentException("Corrupt/truncated scan data: section run lengths summed to "
-							+ total + ", expected 4096 (chunk " + chunkX + "," + chunkZ + " section " + s + ")");
-				}
-
-				sections.add(runs);
+			for (int r = 0; r < runCount; r++) {
+				int paletteIndex = cursor.readVarInt();
+				int length = cursor.readVarInt();
+				runs.add(new DecodedScan.DecodedRun(paletteIndex, length));
+				total += length;
 			}
 
-			chunks.add(new DecodedScan.DecodedChunk(chunkX, chunkZ, sections));
+			if (total != expectedBlocksPerChunk) {
+				throw new IllegalArgumentException("Corrupt/truncated scan data: chunk run lengths summed to "
+						+ total + ", expected " + expectedBlocksPerChunk + " (chunk " + chunkX + "," + chunkZ + ")");
+			}
+
+			chunks.add(new DecodedScan.DecodedChunk(chunkX, chunkZ, runs));
 		}
 
-		return new DecodedScan(dimensionId, minY, maxY, palette, chunks);
+		return new DecodedScan(dimensionId, minY, maxY, captureMode, captureParams, palette, chunks);
+	}
+
+	private static DecodedScan.DecodedCaptureParams readCaptureParams(Cursor cursor, CaptureMode mode) {
+		return switch (mode) {
+			case EVERYTHING -> null;
+			case WHITELIST -> {
+				int count = cursor.readVarInt();
+				List<String> blocks = new ArrayList<>(count);
+
+				for (int i = 0; i < count; i++) {
+					blocks.add(cursor.readStr());
+				}
+
+				yield new DecodedScan.WhitelistParams(blocks);
+			}
+			case ISOLATE -> {
+				String seed = cursor.readStr();
+				int connectivity = cursor.readU8();
+				yield new DecodedScan.IsolateParams(seed, connectivity);
+			}
+		};
 	}
 
 	private static byte[] inflate(byte[] compressed) {

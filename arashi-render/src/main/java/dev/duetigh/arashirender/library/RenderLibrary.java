@@ -52,6 +52,38 @@ public final class RenderLibrary {
 	/** Adds a new library entry for this scan, or refreshes an existing one's metadata if it's already present. */
 	public RenderLibraryEntry upsert(String name, String compactString, DecodedScan decoded, int blockCount) {
 		String id = ScanIdentity.forCompactString(compactString);
+		RenderLibraryEntry entry = upsertMetadata(id, name, decoded, blockCount);
+		entry.binary = false;
+
+		try {
+			Files.createDirectories(DIR);
+			Files.writeString(DIR.resolve(id + ".txt"), compactString, StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to save render library entry " + id, e);
+		}
+
+		persist();
+		return entry;
+	}
+
+	/** Binary-payload counterpart to {@link #upsert} - never materializes a base64 {@code String} for the payload. */
+	public RenderLibraryEntry upsertBinary(String name, byte[] compressedPayload, DecodedScan decoded, int blockCount) {
+		String id = ScanIdentity.forBytes(compressedPayload);
+		RenderLibraryEntry entry = upsertMetadata(id, name, decoded, blockCount);
+		entry.binary = true;
+
+		try {
+			Files.createDirectories(DIR);
+			Files.write(DIR.resolve(id + ".arsb"), compressedPayload);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to save render library entry " + id, e);
+		}
+
+		persist();
+		return entry;
+	}
+
+	private RenderLibraryEntry upsertMetadata(String id, String name, DecodedScan decoded, int blockCount) {
 		RenderLibraryEntry entry = entries.stream().filter(e -> e.id.equals(id)).findFirst().orElse(null);
 
 		if (entry == null) {
@@ -66,15 +98,6 @@ public final class RenderLibrary {
 		entry.chunkCount = decoded.chunks().size();
 		entry.blockCount = blockCount;
 		entry.lastOpenedMillis = System.currentTimeMillis();
-
-		try {
-			Files.createDirectories(DIR);
-			Files.writeString(DIR.resolve(id + ".txt"), compactString, StandardCharsets.UTF_8);
-		} catch (IOException e) {
-			throw new RuntimeException("Failed to save render library entry " + id, e);
-		}
-
-		persist();
 		return entry;
 	}
 
@@ -83,6 +106,7 @@ public final class RenderLibrary {
 
 		try {
 			Files.deleteIfExists(DIR.resolve(id + ".txt"));
+			Files.deleteIfExists(DIR.resolve(id + ".arsb"));
 		} catch (IOException ignored) {
 			// Index no longer references it either way.
 		}
@@ -93,6 +117,14 @@ public final class RenderLibrary {
 	public String compactStringFor(String id) {
 		try {
 			return Files.readString(DIR.resolve(id + ".txt"), StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			return null;
+		}
+	}
+
+	public byte[] compressedBytesFor(String id) {
+		try {
+			return Files.readAllBytes(DIR.resolve(id + ".arsb"));
 		} catch (IOException e) {
 			return null;
 		}

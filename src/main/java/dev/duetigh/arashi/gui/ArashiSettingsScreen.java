@@ -15,11 +15,18 @@ import net.minecraft.network.chat.Component;
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.config.EspMode;
 
-/** ESP appearance (mode, width, opacity), keybind rebinding, and other toggles. Per-block overlay/outline colors are set from the block scanner screen. */
+/**
+ * ESP appearance (mode, width, opacity), keybind rebinding, and other toggles. Per-block overlay/outline
+ * colors are set from the block scanner screen. Rows are laid out with a manual scroll offset (rather
+ * than a real scrollable list container) so all of them stay reachable on short windows.
+ */
 public final class ArashiSettingsScreen extends Screen {
 	private static final int WIDGET_WIDTH = 200;
 	private static final int WIDGET_HEIGHT = 20;
 	private static final int SPACING = 24;
+	private static final int TOP_MARGIN = 32;
+	private static final int BOTTOM_MARGIN = 16;
+	private static final int ROW_COUNT = 13;
 	private static final float MIN_OUTLINE_WIDTH = 1.0f;
 	private static final float MAX_OUTLINE_WIDTH = 8.0f;
 
@@ -28,27 +35,31 @@ public final class ArashiSettingsScreen extends Screen {
 	private final KeyMapping toggleEspKey;
 	private final KeyMapping toggleScanKey;
 	private final KeyMapping openScanBrowserKey;
+	private final KeyMapping copyLastCoordsKey;
 
 	private Button openScannerKeyButton;
 	private Button toggleEspKeyButton;
 	private Button toggleScanKeyButton;
 	private Button openScanBrowserKeyButton;
+	private Button copyLastCoordsKeyButton;
 	private KeyMapping listeningFor;
+	private int scrollAmount;
 
 	public ArashiSettingsScreen(ArashiConfig config, KeyMapping openScannerKey, KeyMapping toggleEspKey,
-			KeyMapping toggleScanKey, KeyMapping openScanBrowserKey) {
+			KeyMapping toggleScanKey, KeyMapping openScanBrowserKey, KeyMapping copyLastCoordsKey) {
 		super(Component.literal("Arashi - Settings"));
 		this.config = config;
 		this.openScannerKey = openScannerKey;
 		this.toggleEspKey = toggleEspKey;
 		this.toggleScanKey = toggleScanKey;
 		this.openScanBrowserKey = openScanBrowserKey;
+		this.copyLastCoordsKey = copyLastCoordsKey;
 	}
 
 	@Override
 	protected void init() {
 		int x = this.width / 2 - WIDGET_WIDTH / 2;
-		int y = 32;
+		int y = TOP_MARGIN - scrollAmount;
 
 		this.addRenderableWidget(CycleButton.builder((EspMode mode) -> Component.literal("ESP Mode: " + modeLabel(mode)), config.espMode())
 				.withValues(EspMode.values())
@@ -110,10 +121,29 @@ public final class ArashiSettingsScreen extends Screen {
 				.build());
 		y += SPACING;
 
+		copyLastCoordsKeyButton = this.addRenderableWidget(Button.builder(keyLabel("Copy Last Coords", copyLastCoordsKey), b -> startListening(copyLastCoordsKey))
+				.pos(x, y)
+				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
+				.build());
+		y += SPACING;
+
 		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
 				.pos(x, y)
 				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
 				.build());
+	}
+
+	@Override
+	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		int maxScroll = Math.max(0, TOP_MARGIN + ROW_COUNT * SPACING - this.height + BOTTOM_MARGIN);
+		int newScroll = (int) Math.max(0, Math.min(maxScroll, scrollAmount - scrollY * SPACING));
+
+		if (newScroll != scrollAmount) {
+			scrollAmount = newScroll;
+			this.rebuildWidgets();
+		}
+
+		return true;
 	}
 
 	private void startListening(KeyMapping mapping) {
@@ -126,6 +156,7 @@ public final class ArashiSettingsScreen extends Screen {
 		toggleEspKeyButton.setMessage(keyLabel("Toggle ESP", toggleEspKey));
 		toggleScanKeyButton.setMessage(keyLabel("Toggle Scan", toggleScanKey));
 		openScanBrowserKeyButton.setMessage(keyLabel("Open Scans", openScanBrowserKey));
+		copyLastCoordsKeyButton.setMessage(keyLabel("Copy Last Coords", copyLastCoordsKey));
 	}
 
 	private Component keyLabel(String action, KeyMapping mapping) {

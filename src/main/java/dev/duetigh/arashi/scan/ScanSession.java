@@ -10,13 +10,17 @@ public final class ScanSession {
 	private final String dimensionId;
 	private final int minY;
 	private final int maxY;
+	private final CaptureMode captureMode;
+	private final CaptureParams captureParams;
 	private final long startedAtMillis;
 	private final Map<ChunkPos, ChunkRecord> chunks = new ConcurrentHashMap<>();
 
-	public ScanSession(String dimensionId, int minY, int maxY) {
+	public ScanSession(String dimensionId, int minY, int maxY, CaptureMode captureMode, CaptureParams captureParams) {
 		this.dimensionId = dimensionId;
 		this.minY = minY;
 		this.maxY = maxY;
+		this.captureMode = captureMode;
+		this.captureParams = captureParams;
 		this.startedAtMillis = System.currentTimeMillis();
 	}
 
@@ -38,6 +42,14 @@ public final class ScanSession {
 
 	public int maxY() {
 		return maxY;
+	}
+
+	public CaptureMode captureMode() {
+		return captureMode;
+	}
+
+	public CaptureParams captureParams() {
+		return captureParams;
 	}
 
 	public long startedAtMillis() {

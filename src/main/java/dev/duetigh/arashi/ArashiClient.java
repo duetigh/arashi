@@ -73,6 +73,8 @@ public final class ArashiClient implements ClientModInitializer {
 	private KeyMapping toggleEspKey;
 	private KeyMapping toggleScanKey;
 	private KeyMapping openScanBrowserKey;
+	private KeyMapping copyLastCoordsKey;
+	private volatile BlockPos lastVeinCoords;
 	private boolean hasSentJoinMessage;
 	private boolean scanningSuppressed;
 
@@ -143,10 +145,13 @@ public final class ArashiClient implements ClientModInitializer {
 				"key.arashi.toggle_scan", InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), category));
 		openScanBrowserKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
 				"key.arashi.open_scan_browser", InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), category));
+		copyLastCoordsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+				"key.arashi.copy_last_coords", InputConstants.Type.KEYSYM, InputConstants.UNKNOWN.getValue(), category));
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (openScannerKey.consumeClick()) {
-				client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore, openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey));
+				client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore,
+						openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey, copyLastCoordsKey));
 			}
 
 			while (toggleEspKey.consumeClick()) {
@@ -160,6 +165,10 @@ public final class ArashiClient implements ClientModInitializer {
 
 			while (openScanBrowserKey.consumeClick()) {
 				client.setScreen(new ScanBrowserScreen(client.screen, scanController, scanStore));
+			}
+
+			while (copyLastCoordsKey.consumeClick()) {
+				copyLastCoordsToClipboard();
 			}
 		});
 	}
@@ -191,6 +200,26 @@ public final class ArashiClient implements ClientModInitializer {
 			if (client.player != null) {
 				client.player.sendSystemMessage(prefixed("Scan started."));
 			}
+		}
+	}
+
+	private void copyLastCoordsToClipboard() {
+		Minecraft client = Minecraft.getInstance();
+		BlockPos pos = lastVeinCoords;
+
+		if (pos == null) {
+			if (client.player != null) {
+				client.player.sendSystemMessage(prefixed("No coordinates to copy yet."));
+			}
+
+			return;
+		}
+
+		String coords = "(" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")";
+		client.keyboardHandler.setClipboard(coords);
+
+		if (client.player != null) {
+			client.player.sendSystemMessage(prefixed("Copied " + coords + " to clipboard."));
 		}
 	}
 
@@ -240,7 +269,8 @@ public final class ArashiClient implements ClientModInitializer {
 				ClientCommands.literal("arashi")
 						.executes(context -> {
 							Minecraft client = Minecraft.getInstance();
-							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore, openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey)));
+							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore,
+									openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey, copyLastCoordsKey)));
 							return 1;
 						})
 						.then(ClientCommands.literal("update").executes(context -> {
@@ -363,6 +393,12 @@ public final class ArashiClient implements ClientModInitializer {
 	}
 
 	private void onNewMatches(ClientLevel level, Map<Block, List<VeinMatch>> newVeins) {
+		for (List<VeinMatch> veins : newVeins.values()) {
+			for (VeinMatch vein : veins) {
+				lastVeinCoords = vein.center();
+			}
+		}
+
 		if (!config.chatCoordsEnabled()) {
 			return;
 		}

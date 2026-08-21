@@ -3,5 +3,6 @@
   "key.arashi.open_scanner": "Open Block Scanner",
   "key.arashi.toggle_esp": "Toggle ESP",
   "key.arashi.toggle_scan": "Toggle Scan",
-  "key.arashi.open_scan_browser": "Open Scan Browser"
+  "key.arashi.open_scan_browser": "Open Scan Browser",
+  "key.arashi.copy_last_coords": "Copy Last Coordinates"
 }

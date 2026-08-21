@@ -4,7 +4,6 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -20,11 +19,17 @@ import dev.duetigh.arashi.scan.ScanController;
 import dev.duetigh.arashi.scan.ScanEntry;
 import dev.duetigh.arashi.scan.ScanStore;
 
-/** Start/stop scanning, and browse, rename, delete, or copy previously saved scans. */
+/**
+ * Browse, rename, delete, or export previously saved scans. While a scan is running, this screen
+ * is locked to a banner pointing at {@link ScanSetupScreen} - the list/export/delete actions below
+ * would otherwise operate on stale data (or race a scan that's still writing to disk).
+ */
 public final class ScanBrowserScreen extends Screen {
 	private static final int ROW_HEIGHT = 36;
 	private static final int ACTION_ROW_Y_OFFSET = 24;
-	private static final int SIZE_WARNING_BYTES = 300_000;
+	private static final int ACTION_WIDTH = 50;
+	private static final int ACTION_COUNT = 4;
+	private static final long SIZE_WARNING_BYTES = 300_000;
 	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 			.withZone(ZoneId.systemDefault());
 
@@ -32,7 +37,6 @@ public final class ScanBrowserScreen extends Screen {
 	private final ScanController controller;
 	private final ScanStore store;
 
-	private Button startStopButton;
 	private ScanList list;
 	private String renamingId;
 	private EditBox renameBox;
@@ -48,7 +52,30 @@ public final class ScanBrowserScreen extends Screen {
 
 	@Override
 	protected void init() {
-		startStopButton = this.addRenderableWidget(Button.builder(startStopLabel(), b -> toggleScan())
+		if (controller.isActive()) {
+			initActiveScanBanner();
+		} else {
+			initScanList();
+		}
+	}
+
+	/** Locked-out view while a scan is running: nothing here can touch the scan list until it's stopped. */
+	private void initActiveScanBanner() {
+		this.addRenderableWidget(Button.builder(Component.literal("Manage Running Scan"),
+						b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store)))
+				.pos(this.width / 2 - 100, this.height / 2 - 30)
+				.size(200, 20)
+				.build());
+
+		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
+				.pos(this.width / 2 - 50, this.height - 26)
+				.size(100, 20)
+				.build());
+	}
+
+	private void initScanList() {
+		this.addRenderableWidget(Button.builder(Component.literal("Make Scan"),
+						b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store)))
 				.pos(this.width / 2 - 100, 24)
 				.size(200, 20)
 				.build());
@@ -76,25 +103,6 @@ public final class ScanBrowserScreen extends Screen {
 				.pos(this.width / 2 - 50, this.height - 26)
 				.size(100, 20)
 				.build());
-	}
-
-	private void toggleScan() {
-		if (controller.isActive()) {
-			ScanEntry entry = controller.stop();
-			statusMessage = entry != null ? "Saved \"" + entry.name() + "\" (" + entry.chunkCount() + " chunks)." : "Scan discarded (no chunks captured).";
-			refreshList();
-		} else if (this.minecraft.level != null) {
-			controller.start(this.minecraft.level);
-			statusMessage = "";
-		} else {
-			statusMessage = "You must be in a world to start a scan.";
-		}
-
-		startStopButton.setMessage(startStopLabel());
-	}
-
-	private Component startStopLabel() {
-		return Component.literal(controller.isActive() ? "Stop Scan (saves)" : "Start Scan");
 	}
 
 	private void refreshList() {
@@ -140,18 +148,26 @@ public final class ScanBrowserScreen extends Screen {
 		return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
 	}
 
+	private void copyPathToClipboard(Path path) {
+		Minecraft.getInstance().keyboardHandler.setClipboard(path.toString());
+	}
+
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 		graphics.text(this.font, this.title, this.width / 2 - this.font.width(this.title) / 2, 6, 0xFFFFFFFF, true);
 
-		String status = controller.isActive()
-				? "Scanning... " + controller.activeChunkCount() + " chunks captured"
-				: statusMessage;
+		if (controller.isActive()) {
+			String status = "A scan is currently running (" + controller.activeChunkCount() + " chunks captured).";
+			String hint = "Manage it from the setup screen before browsing scans.";
+			graphics.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, this.height / 2 - 54, 0xFF55FF55, true);
+			graphics.text(this.font, Component.literal(hint), this.width / 2 - this.font.width(hint) / 2, this.height / 2 - 44, 0xFFAAAAAA, true);
+			return;
+		}
 
-		if (!status.isEmpty() && renamingId == null) {
-			int color = controller.isActive() ? 0xFF55FF55 : 0xFFAAAAAA;
-			graphics.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, 48, color, true);
+		if (!statusMessage.isEmpty() && renamingId == null) {
+			String status = this.font.plainSubstrByWidth(statusMessage, this.width - 16);
+			graphics.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, 48, 0xFFAAAAAA, true);
 		}
 	}
 
@@ -179,8 +195,6 @@ public final class ScanBrowserScreen extends Screen {
 		}
 
 		final class ScanRow extends AbstractSelectionList.Entry<ScanRow> {
-			private static final int ACTION_WIDTH = 56;
-
 			private final ScanEntry entry;
 
 			ScanRow(ScanEntry entry) {
@@ -205,22 +219,32 @@ public final class ScanBrowserScreen extends Screen {
 				String subtitle = entry.dimension().replace("minecraft:", "") + " * " + entry.chunkCount() + " chunks * "
 						+ formatSize(entry.byteSize()) + " * " + TIMESTAMP_FORMAT.format(Instant.ofEpochMilli(entry.timestampMillis()));
 
-				graphics.text(ScanBrowserScreen.this.font, Component.literal(entry.name()), x + 4, y + 2, 0xFFFFFFFF, false);
-				graphics.text(ScanBrowserScreen.this.font, Component.literal(subtitle), x + 4, y + 12, 0xFFAAAAAA, false);
+				if (entry.byteSize() > SIZE_WARNING_BYTES) {
+					subtitle += " * large scan";
+				}
+
+				int availableWidth = width - ACTION_WIDTH * ACTION_COUNT - 8;
+				String name = ScanBrowserScreen.this.font.plainSubstrByWidth(entry.name(), availableWidth);
+				subtitle = ScanBrowserScreen.this.font.plainSubstrByWidth(subtitle, availableWidth);
+				int subtitleColor = entry.byteSize() > SIZE_WARNING_BYTES ? 0xFFFFAA55 : 0xFFAAAAAA;
+
+				graphics.text(ScanBrowserScreen.this.font, Component.literal(name), x + 4, y + 2, 0xFFFFFFFF, false);
+				graphics.text(ScanBrowserScreen.this.font, Component.literal(subtitle), x + 4, y + 12, subtitleColor, false);
 
 				if (pendingDelete()) {
 					String confirm = "Confirm delete?";
-					int confirmX = x + width - ACTION_WIDTH * 3 - 8;
+					int confirmX = x + width - ACTION_WIDTH * ACTION_COUNT - 8;
 					graphics.text(ScanBrowserScreen.this.font, Component.literal(confirm), confirmX, y + ACTION_ROW_Y_OFFSET, 0xFFFF5555, false);
 				}
 
 				drawAction(graphics, actionX(0), y, "Rename", 0xFFFFFFFF);
 				drawAction(graphics, actionX(1), y, "Export", 0xFFFFFFFF);
-				drawAction(graphics, actionX(2), y, pendingDelete() ? "Confirm" : "Delete", 0xFFFF5555);
+				drawAction(graphics, actionX(2), y, "Bin", 0xFFFFFFFF);
+				drawAction(graphics, actionX(3), y, pendingDelete() ? "Confirm" : "Delete", 0xFFFF5555);
 			}
 
 			private int actionX(int index) {
-				return getX() + getWidth() - ACTION_WIDTH * (3 - index) - 4;
+				return getX() + getWidth() - ACTION_WIDTH * (ACTION_COUNT - index) - 4;
 			}
 
 			private void drawAction(GuiGraphicsExtractor graphics, int x, int y, String label, int color) {
@@ -237,27 +261,40 @@ public final class ScanBrowserScreen extends Screen {
 					return true;
 				}
 
-				if (localX >= width - ACTION_WIDTH * 3 - 4 && localX < width - ACTION_WIDTH * 2 - 4) {
-					beginRename(entry.id());
-					return true;
-				}
+				for (int i = 0; i < ACTION_COUNT; i++) {
+					int slotStart = width - ACTION_WIDTH * (ACTION_COUNT - i) - 4;
+					int slotEnd = slotStart + ACTION_WIDTH;
 
-				if (localX >= width - ACTION_WIDTH * 2 - 4 && localX < width - ACTION_WIDTH - 4) {
-					this.exportToFile();
-					return true;
-				}
-
-				if (localX >= width - ACTION_WIDTH - 4) {
-					this.handleDeleteClick();
-					return true;
+					if (localX >= slotStart && localX < slotEnd) {
+						handleAction(i);
+						return true;
+					}
 				}
 
 				return true;
 			}
 
+			private void handleAction(int index) {
+				switch (index) {
+					case 0 -> beginRename(entry.id());
+					case 1 -> exportToFile();
+					case 2 -> exportBinaryToFile();
+					case 3 -> handleDeleteClick();
+					default -> {
+					}
+				}
+			}
+
 			private void exportToFile() {
 				Path path = store.exportToFile(entry.id());
-				statusMessage = "Exported to " + path + " - open it in arashi-render.";
+				copyPathToClipboard(path);
+				statusMessage = "Exported to " + path + " (path copied to clipboard).";
+			}
+
+			private void exportBinaryToFile() {
+				Path path = store.exportBinaryToFile(entry.id());
+				copyPathToClipboard(path);
+				statusMessage = "Exported binary to " + path + " (path copied to clipboard).";
 			}
 
 			private void handleDeleteClick() {

@@ -8,6 +8,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 
@@ -23,7 +24,7 @@ import net.minecraft.world.level.block.Block;
  */
 public final class ScanEncoder {
 	static final byte[] MAGIC = {'A', 'R', 'S', 'H'};
-	static final int FORMAT_VERSION = 1;
+	static final int FORMAT_VERSION = 2;
 
 	private ScanEncoder() {
 	}
@@ -38,6 +39,7 @@ public final class ScanEncoder {
 		try {
 			out.write(MAGIC);
 			out.write(FORMAT_VERSION);
+			writeCaptureMode(out, session.captureMode(), session.captureParams());
 			writeStr(out, session.dimensionId());
 			writeI32(out, session.minY());
 			writeI32(out, session.maxY());
@@ -52,13 +54,12 @@ public final class ScanEncoder {
 				writeI32(out, record.chunkX());
 				writeI32(out, record.chunkZ());
 
-				for (List<ChunkRecord.Run> runs : record.sections()) {
-					writeVarInt(out, runs.size());
+				List<ChunkRecord.Run> runs = record.runs();
+				writeVarInt(out, runs.size());
 
-					for (ChunkRecord.Run run : runs) {
-						writeVarInt(out, paletteIndex.get(run.block()));
-						writeVarInt(out, run.length());
-					}
+				for (ChunkRecord.Run run : runs) {
+					writeVarInt(out, paletteIndex.get(run.block()));
+					writeVarInt(out, run.length());
 				}
 			}
 		} catch (IOException e) {
@@ -98,14 +99,34 @@ public final class ScanEncoder {
 		Map<Block, Integer> index = new LinkedHashMap<>();
 
 		for (ChunkRecord record : session.chunks().values()) {
-			for (List<ChunkRecord.Run> runs : record.sections()) {
-				for (ChunkRecord.Run run : runs) {
-					index.computeIfAbsent(run.block(), b -> index.size());
-				}
+			for (ChunkRecord.Run run : record.runs()) {
+				index.computeIfAbsent(run.block(), b -> index.size());
 			}
 		}
 
 		return index;
+	}
+
+	private static void writeCaptureMode(ByteArrayOutputStream out, CaptureMode mode, CaptureParams params) throws IOException {
+		out.write(mode.wireId());
+
+		switch (mode) {
+			case EVERYTHING -> {
+			}
+			case WHITELIST -> {
+				Set<Block> blocks = ((CaptureParams.Whitelist) params).blocks();
+				writeVarInt(out, blocks.size());
+
+				for (Block block : blocks) {
+					writeStr(out, BuiltInRegistries.BLOCK.getKey(block).toString());
+				}
+			}
+			case ISOLATE -> {
+				CaptureParams.Isolate isolate = (CaptureParams.Isolate) params;
+				writeStr(out, BuiltInRegistries.BLOCK.getKey(isolate.seed()).toString());
+				out.write(isolate.connectivity());
+			}
+		}
 	}
 
 	static void writeVarInt(ByteArrayOutputStream out, int value) {

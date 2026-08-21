@@ -146,6 +146,33 @@ public final class ScanStore {
 		return target;
 	}
 
+	/**
+	 * Writes a scan's raw compressed bytes (no base64) to a standalone {@code .arsb} file under
+	 * {@code config/arashi/scans/exports/} - skips the ~33% base64 bloat and the giant-String decode
+	 * cost that {@link #exportToFile} pays, at the cost of arashi-render needing a binary-aware
+	 * import path. Returns the written path.
+	 */
+	public Path exportBinaryToFile(String id) {
+		ScanEntry entry = find(id).orElseThrow(() -> new IllegalArgumentException("Unknown scan id: " + id));
+		Path exportsDir = dir.resolve("exports");
+		String safeName = entry.name().replaceAll("[^a-zA-Z0-9 _-]", "_").strip();
+
+		if (safeName.isEmpty()) {
+			safeName = "scan";
+		}
+
+		Path target = exportsDir.resolve(safeName + ".arsb");
+
+		try {
+			Files.createDirectories(exportsDir);
+			Files.write(target, compressedBytes(id));
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to export scan to " + target, e);
+		}
+
+		return target;
+	}
+
 	private java.util.Optional<ScanEntry> find(String id) {
 		return entries.stream().filter(e -> e.id().equals(id)).findFirst();
 	}

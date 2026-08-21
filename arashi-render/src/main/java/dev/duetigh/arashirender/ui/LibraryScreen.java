@@ -158,15 +158,27 @@ public final class LibraryScreen {
 	}
 
 	private void openEntry(AppState state, RenderLibraryEntry entry) {
-		String compactString = state.library.compactStringFor(entry.id);
-
-		if (compactString == null) {
-			state.statusMessage = "Failed to load render: saved data is missing.";
-			return;
-		}
-
 		try {
-			state.loadFromCompactString(compactString, entry.name);
+			if (entry.binary) {
+				byte[] compressed = state.library.compressedBytesFor(entry.id);
+
+				if (compressed == null) {
+					state.statusMessage = "Failed to load render: saved data is missing.";
+					return;
+				}
+
+				state.loadFromCompressedBytes(compressed, entry.name);
+			} else {
+				String compactString = state.library.compactStringFor(entry.id);
+
+				if (compactString == null) {
+					state.statusMessage = "Failed to load render: saved data is missing.";
+					return;
+				}
+
+				state.loadFromCompactString(compactString, entry.name);
+			}
+
 			state.library.touchOpened(entry.id);
 			state.statusMessage = "";
 			state.screen = AppState.Screen.VIEWER;

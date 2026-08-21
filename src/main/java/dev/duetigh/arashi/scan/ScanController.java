@@ -34,16 +34,25 @@ public final class ScanController {
 		this.onStop = listener;
 	}
 
+	/** Quick-start shortcut: full world height, no filtering. */
 	public boolean start(ClientLevel level) {
+		return start(level, level.getMinY(), level.getMaxY(), CaptureMode.EVERYTHING, CaptureParams.EVERYTHING);
+	}
+
+	/** Starts a scan with a user-chosen Y-range (silently clamped to the world's actual bounds) and capture mode. */
+	public boolean start(ClientLevel level, int minY, int maxY, CaptureMode mode, CaptureParams params) {
 		if (session != null) {
 			return false;
 		}
 
-		ScanSession newSession = new ScanSession(level.dimension().identifier().toString(), level.getMinY(), level.getMaxY());
+		int clampedMinY = Math.max(minY, level.getMinY());
+		int clampedMaxY = Math.min(maxY, level.getMaxY());
+
+		ScanSession newSession = new ScanSession(level.dimension().identifier().toString(), clampedMinY, clampedMaxY, mode, params);
 
 		for (LevelChunk chunk : scanner.loadedChunks()) {
 			if (withinRenderDistance(chunk.getPos())) {
-				newSession.recordChunk(ChunkRecord.capture(chunk, newSession.minY(), newSession.maxY()));
+				newSession.recordChunk(ChunkRecord.capture(chunk, newSession.minY(), newSession.maxY(), mode, params));
 			}
 		}
 
@@ -57,7 +66,8 @@ public final class ScanController {
 
 		if (current != null && level.dimension().identifier().toString().equals(current.dimensionId())
 				&& withinRenderDistance(chunk.getPos())) {
-			current.recordChunk(ChunkRecord.capture(chunk, current.minY(), current.maxY()));
+			current.recordChunk(ChunkRecord.capture(chunk, current.minY(), current.maxY(),
+					current.captureMode(), current.captureParams()));
 		}
 	}
 
@@ -118,5 +128,10 @@ public final class ScanController {
 	public int activeChunkCount() {
 		ScanSession current = session;
 		return current != null ? current.chunkCount() : 0;
+	}
+
+	/** The running session's settings, for a setup screen opened while a scan is already active. Null fields/session if inactive. */
+	public ScanSession activeSession() {
+		return session;
 	}
 }

@@ -1,7 +1,6 @@
 package dev.duetigh.arashirender.world;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import dev.duetigh.arashirender.format.DecodedScan;
@@ -56,6 +55,8 @@ public final class VoxelWorld {
 		int minZ = Integer.MAX_VALUE;
 		int maxZ = Integer.MIN_VALUE;
 
+		int columnHeight = scan.maxY() - scan.minY();
+
 		for (DecodedScan.DecodedChunk chunk : scan.chunks()) {
 			int baseX = chunk.chunkX() * 16;
 			int baseZ = chunk.chunkZ() * 16;
@@ -64,22 +65,17 @@ public final class VoxelWorld {
 			minZ = Math.min(minZ, baseZ);
 			maxZ = Math.max(maxZ, baseZ + 15);
 
-			List<List<DecodedScan.Run>> sections = chunk.sections();
+			int cellIndex = 0;
 
-			for (int s = 0; s < sections.size(); s++) {
-				int sectionMinY = scan.minY() + s * 16;
-				int cellIndex = 0;
+			for (DecodedScan.Run run : chunk.runs()) {
+				counts[run.paletteIndex()] += run.length();
 
-				for (DecodedScan.Run run : sections.get(s)) {
-					counts[run.paletteIndex()] += run.length();
-
-					for (int k = 0; k < run.length(); k++) {
-						int x = cellIndex / 256;
-						int z = (cellIndex / 16) % 16;
-						int y = cellIndex % 16;
-						cells.put(pack(baseX + x, sectionMinY + y, baseZ + z), run.paletteIndex());
-						cellIndex++;
-					}
+				for (int k = 0; k < run.length(); k++) {
+					int x = cellIndex / (16 * columnHeight);
+					int z = (cellIndex / columnHeight) % 16;
+					int y = cellIndex % columnHeight;
+					cells.put(pack(baseX + x, scan.minY() + y, baseZ + z), run.paletteIndex());
+					cellIndex++;
 				}
 			}
 		}

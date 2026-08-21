@@ -15,9 +15,14 @@ public final class ScanIdentity {
 	}
 
 	public static String forCompactString(String compactString) {
+		return forBytes(compactString.strip().getBytes(StandardCharsets.UTF_8));
+	}
+
+	/** For binary (non-base64) imports, hashed directly over the compressed payload bytes - no String ever materialized. */
+	public static String forBytes(byte[] payload) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			byte[] hash = digest.digest(compactString.strip().getBytes(StandardCharsets.UTF_8));
+			byte[] hash = digest.digest(payload);
 			return HexFormat.of().formatHex(hash, 0, 8);
 		} catch (NoSuchAlgorithmException e) {
 			throw new IllegalStateException(e);

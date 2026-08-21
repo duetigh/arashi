@@ -9,4 +9,6 @@ public final class RenderLibraryEntry {
 	public int blockCount;
 	public long savedAtMillis;
 	public long lastOpenedMillis;
+	/** True if the payload is stored as raw compressed bytes ({@code <id>.arsb}) rather than a base64 string ({@code <id>.txt}). */
+	public boolean binary;
 }

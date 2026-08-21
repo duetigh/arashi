@@ -81,13 +81,27 @@ public final class AppState {
 	/** Decodes and loads a scan from its compact string, resetting filters and loading its saved views. Throws on malformed input. */
 	public void loadFromCompactString(String compactString, String scanName) {
 		DecodedScan decoded = ScanFormatDecoder.decode(compactString);
+		this.compactString = compactString;
+		finishLoad(decoded, scanName, ScanIdentity.forCompactString(compactString));
+	}
+
+	/**
+	 * Decodes and loads a scan from raw compressed bytes (the binary export path) - never materializes
+	 * a base64 {@code String} for the payload, unlike {@link #loadFromCompactString}.
+	 */
+	public void loadFromCompressedBytes(byte[] compressedPayload, String scanName) {
+		DecodedScan decoded = ScanFormatDecoder.decodeCompressed(compressedPayload);
+		this.compactString = "";
+		finishLoad(decoded, scanName, ScanIdentity.forBytes(compressedPayload));
+	}
+
+	private void finishLoad(DecodedScan decoded, String scanName, String scanId) {
 		VoxelWorld built = VoxelWorld.build(decoded);
 
 		this.scan = decoded;
 		this.world = built;
-		this.compactString = compactString;
 		this.scanName = scanName.isBlank() ? "Untitled scan" : scanName;
-		this.scanId = ScanIdentity.forCompactString(compactString);
+		this.scanId = scanId;
 		this.loadedAtMillis = System.currentTimeMillis();
 		this.viewStore = ViewStore.loadFor(scanId, this.scanName);
 		this.filters.resetRangeTo(built);

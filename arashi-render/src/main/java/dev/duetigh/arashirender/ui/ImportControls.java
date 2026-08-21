@@ -13,7 +13,9 @@ import dev.duetigh.arashirender.AppState;
 /**
  * The "paste from clipboard" / "open scan file" button pair, shared by {@link UiPanel}'s scan section
  * and {@link LibraryScreen}'s import flow. Every successful load also registers the scan in the
- * render library, so anything ever opened - from either screen - shows up there.
+ * render library, so anything ever opened - from either screen - shows up there. {@code .arsb} files
+ * (the raw-binary export) are read as bytes and never turned into a base64 {@code String}; everything
+ * else (pasted text, {@code .txt} files) goes through the existing text path.
  */
 final class ImportControls {
 	private ImportControls() {
@@ -27,7 +29,7 @@ final class ImportControls {
 			String clipboard = ImGui.getClipboardText();
 
 			if (clipboard != null && !clipboard.isBlank()) {
-				loaded = tryImport(state, clipboard, nameOverride, "Pasted scan");
+				loaded = tryImportText(state, clipboard, nameOverride, "Pasted scan");
 			} else {
 				state.statusMessage = "Clipboard is empty.";
 			}
@@ -36,13 +38,18 @@ final class ImportControls {
 		ImGui.sameLine();
 
 		if (ImGui.button("Open scan file...")) {
-			String path = TinyFileDialogs.tinyfd_openFileDialog("Open Arashi scan", "", null, "Scan text files", false);
+			String path = TinyFileDialogs.tinyfd_openFileDialog("Open Arashi scan", "", null, "Scan files", false);
 
 			if (path != null) {
+				Path file = Path.of(path);
+				String defaultName = file.getFileName().toString();
+
 				try {
-					String content = Files.readString(Path.of(path));
-					String defaultName = Path.of(path).getFileName().toString();
-					loaded = tryImport(state, content, nameOverride, defaultName);
+					if (path.toLowerCase().endsWith(".arsb")) {
+						loaded = tryImportBinary(state, Files.readAllBytes(file), nameOverride, defaultName);
+					} else {
+						loaded = tryImportText(state, Files.readString(file), nameOverride, defaultName);
+					}
 				} catch (IOException e) {
 					state.statusMessage = "Failed to read file: " + e.getMessage();
 				}
@@ -56,12 +63,26 @@ final class ImportControls {
 		return loaded;
 	}
 
-	private static boolean tryImport(AppState state, String compactString, String nameOverride, String defaultName) {
+	private static boolean tryImportText(AppState state, String compactString, String nameOverride, String defaultName) {
 		String name = nameOverride != null && !nameOverride.isBlank() ? nameOverride.strip() : defaultName;
 
 		try {
 			state.loadFromCompactString(compactString, name);
 			state.library.upsert(state.scanName, compactString, state.scan, state.world.totalBlockCount());
+			state.statusMessage = "";
+			return true;
+		} catch (Exception e) {
+			state.statusMessage = "Failed to load scan: " + e.getMessage();
+			return false;
+		}
+	}
+
+	private static boolean tryImportBinary(AppState state, byte[] compressedPayload, String nameOverride, String defaultName) {
+		String name = nameOverride != null && !nameOverride.isBlank() ? nameOverride.strip() : defaultName;
+
+		try {
+			state.loadFromCompressedBytes(compressedPayload, name);
+			state.library.upsertBinary(state.scanName, compressedPayload, state.scan, state.world.totalBlockCount());
 			state.statusMessage = "";
 			return true;
 		} catch (Exception e) {
