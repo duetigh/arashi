@@ -11,6 +11,7 @@ import net.minecraft.client.gui.components.AbstractSelectionList;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
+import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -40,7 +41,6 @@ public final class ScanBrowserScreen extends Screen {
 	private ScanList list;
 	private String renamingId;
 	private EditBox renameBox;
-	private String pendingDeleteId;
 	private String statusMessage = "";
 
 	public ScanBrowserScreen(Screen parent, ScanController controller, ScanStore store) {
@@ -115,7 +115,6 @@ public final class ScanBrowserScreen extends Screen {
 
 	private void beginRename(String id) {
 		renamingId = id;
-		pendingDeleteId = null;
 		this.rebuildWidgets();
 	}
 
@@ -201,10 +200,6 @@ public final class ScanBrowserScreen extends Screen {
 				this.entry = entry;
 			}
 
-			private boolean pendingDelete() {
-				return entry.id().equals(pendingDeleteId);
-			}
-
 			@Override
 			public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float tickDelta) {
 				int x = getX();
@@ -223,7 +218,7 @@ public final class ScanBrowserScreen extends Screen {
 					subtitle += " * large scan";
 				}
 
-				int availableWidth = width - ACTION_WIDTH * ACTION_COUNT - 8;
+				int availableWidth = width - 8;
 				String name = ScanBrowserScreen.this.font.plainSubstrByWidth(entry.name(), availableWidth);
 				subtitle = ScanBrowserScreen.this.font.plainSubstrByWidth(subtitle, availableWidth);
 				int subtitleColor = entry.byteSize() > SIZE_WARNING_BYTES ? 0xFFFFAA55 : 0xFFAAAAAA;
@@ -231,16 +226,10 @@ public final class ScanBrowserScreen extends Screen {
 				graphics.text(ScanBrowserScreen.this.font, Component.literal(name), x + 4, y + 2, 0xFFFFFFFF, false);
 				graphics.text(ScanBrowserScreen.this.font, Component.literal(subtitle), x + 4, y + 12, subtitleColor, false);
 
-				if (pendingDelete()) {
-					String confirm = "Confirm delete?";
-					int confirmX = x + width - ACTION_WIDTH * ACTION_COUNT - 8;
-					graphics.text(ScanBrowserScreen.this.font, Component.literal(confirm), confirmX, y + ACTION_ROW_Y_OFFSET, 0xFFFF5555, false);
-				}
-
 				drawAction(graphics, actionX(0), y, "Rename", 0xFFFFFFFF);
 				drawAction(graphics, actionX(1), y, "Export", 0xFFFFFFFF);
 				drawAction(graphics, actionX(2), y, "Bin", 0xFFFFFFFF);
-				drawAction(graphics, actionX(3), y, pendingDelete() ? "Confirm" : "Delete", 0xFFFF5555);
+				drawAction(graphics, actionX(3), y, "Delete", 0xFFFF5555);
 			}
 
 			private int actionX(int index) {
@@ -279,7 +268,7 @@ public final class ScanBrowserScreen extends Screen {
 					case 0 -> beginRename(entry.id());
 					case 1 -> exportToFile();
 					case 2 -> exportBinaryToFile();
-					case 3 -> handleDeleteClick();
+					case 3 -> confirmDelete();
 					default -> {
 					}
 				}
@@ -297,14 +286,19 @@ public final class ScanBrowserScreen extends Screen {
 				statusMessage = "Exported binary to " + path + " (path copied to clipboard).";
 			}
 
-			private void handleDeleteClick() {
-				if (pendingDelete()) {
-					store.delete(entry.id());
-					pendingDeleteId = null;
-					refreshList();
-				} else {
-					pendingDeleteId = entry.id();
-				}
+			private void confirmDelete() {
+				ScanBrowserScreen.this.minecraft.setScreen(new ConfirmScreen(confirmed -> {
+					if (confirmed) {
+						store.delete(entry.id());
+					}
+
+					ScanBrowserScreen.this.minecraft.setScreen(ScanBrowserScreen.this);
+
+					if (confirmed) {
+						refreshList();
+					}
+				}, Component.literal("Delete Scan"),
+						Component.literal("Are you sure you want to delete \"" + entry.name() + "\"? This cannot be undone.")));
 			}
 		}
 	}

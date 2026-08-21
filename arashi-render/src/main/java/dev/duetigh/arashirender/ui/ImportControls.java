@@ -38,7 +38,9 @@ final class ImportControls {
 		ImGui.sameLine();
 
 		if (ImGui.button("Open scan file...")) {
-			String path = TinyFileDialogs.tinyfd_openFileDialog("Open Arashi scan", "", null, "Scan files", false);
+			String startDir = state.settings.scanFolderPath;
+			String path = TinyFileDialogs.tinyfd_openFileDialog("Open Arashi scan",
+					startDir != null ? startDir + "/" : "", null, "Scan files", false);
 
 			if (path != null) {
 				Path file = Path.of(path);
@@ -54,6 +56,25 @@ final class ImportControls {
 					state.statusMessage = "Failed to read file: " + e.getMessage();
 				}
 			}
+		}
+
+		if (ImGui.button("Scan folder...")) {
+			String startDir = state.settings.scanFolderPath;
+			String folder = TinyFileDialogs.tinyfd_selectFolderDialog("Select the folder to pull scans from",
+					startDir != null ? startDir : "");
+
+			if (folder != null) {
+				state.settings.scanFolderPath = folder;
+				state.settings.save();
+			}
+		}
+
+		ImGui.sameLine();
+
+		if (state.settings.scanFolderPath != null) {
+			ImGui.textDisabled(state.settings.scanFolderPath);
+		} else {
+			ImGui.textDisabled("No scan folder linked - \"Open scan file...\" starts from the default location.");
 		}
 
 		if (!state.statusMessage.isEmpty()) {

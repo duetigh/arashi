@@ -20,6 +20,7 @@ public final class SettingsStore {
 	public boolean centerOnLoad;
 	public RenderMode renderMode = RenderMode.COLOR;
 	public String textureSourcePath;
+	public String scanFolderPath;
 
 	public static SettingsStore load() {
 		if (!Files.exists(PATH)) {
