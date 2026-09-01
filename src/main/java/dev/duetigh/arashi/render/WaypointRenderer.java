@@ -1,0 +1,156 @@
+package dev.duetigh.arashi.render;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Stream;
+
+import org.joml.Matrix4f;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+
+import dev.duetigh.arashi.config.ArashiConfig;
+import dev.duetigh.arashi.waypoint.Waypoint;
+import dev.duetigh.arashi.waypoint.WaypointEditorState;
+import dev.duetigh.arashi.waypoint.WaypointGroup;
+import dev.duetigh.arashi.waypoint.WaypointNavigator;
+import dev.duetigh.arashi.waypoint.WaypointStore;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+
+/**
+ * Draws a colored marker box and an optional camera-facing floating label ("#order type") over
+ * waypoints - every waypoint in the group being edited while the waypoint editor is active,
+ * otherwise just the current and next two from {@link WaypointNavigator}. While navigating, also
+ * draws the route itself as two connected lines - player to the current waypoint, then current to
+ * next - rather than only listing them as text, and following the navigator's own looping past the
+ * final waypoint back to the first. Uses the same depth-test-disabled line pipeline as
+ * {@link EspRenderer} so everything reads through terrain.
+ */
+public final class WaypointRenderer {
+	private static final float LINE_WIDTH = 2.0f;
+	private static final float PATH_LINE_WIDTH = 2.0f;
+	// See EspGeometry.nearCameraOrigin - kept the same magnitude as TrackingRenderer's so the path's
+	// first segment is equally immune to near-plane vanishing and head-bob swim.
+	private static final float PATH_NEAR_OFFSET = 1.5f;
+	private static final float TEXT_SCALE = 0.025f;
+	// Vanilla's standard "fully lit" packed light value (15 sky, 15 block) - text should read the
+	// same regardless of actual world lighting, matching the x-ray intent of the rest of the ESP.
+	private static final int FULL_BRIGHT = 0xF000F0;
+
+	private final ArashiConfig config;
+	private final WaypointStore store;
+	private final WaypointEditorState editorState;
+	private final WaypointNavigator navigator;
+
+	public WaypointRenderer(ArashiConfig config, WaypointStore store, WaypointEditorState editorState, WaypointNavigator navigator) {
+		this.config = config;
+		this.store = store;
+		this.editorState = editorState;
+		this.navigator = navigator;
+	}
+
+	public void register() {
+		LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(this::render);
+	}
+
+	private void render(LevelRenderContext context) {
+		List<Waypoint> toRender = waypointsToRender();
+		boolean navigating = !editorState.isEditing();
+		Optional<Waypoint> current = navigating ? navigator.current() : Optional.empty();
+
+		if (toRender.isEmpty() && current.isEmpty()) {
+			return;
+		}
+
+		Vec3 camera = context.levelState().cameraRenderState.pos;
+		MultiBufferSource.BufferSource bufferSource = context.bufferSource();
+		PoseStack poseStack = context.poseStack();
+		poseStack.pushPose();
+		poseStack.translate(-camera.x, -camera.y, -camera.z);
+		PoseStack.Pose pose = poseStack.last();
+
+		VertexConsumer outlineBuffer = bufferSource.getBuffer(EspRenderTypes.LINES);
+
+		for (Waypoint waypoint : toRender) {
+			int color = EspGeometry.withOpacity(colorFor(waypoint), 1.0f);
+			AABB box = new AABB(waypoint.pos());
+			EspGeometry.drawLineBox(pose, outlineBuffer, box, color, LINE_WIDTH);
+		}
+
+		current.ifPresent(waypoint -> drawNavigationPath(context, camera, pose, outlineBuffer, waypoint));
+
+		poseStack.popPose();
+
+		if (config.waypointFloatingTextEnabled()) {
+			for (Waypoint waypoint : toRender) {
+				drawLabel(context, camera, waypoint);
+			}
+		}
+	}
+
+	/**
+	 * The route itself, drawn as world-space lines rather than the old top-right text card: one
+	 * segment from the player to the waypoint they're currently heading to, and one from there to
+	 * the waypoint after it - which, thanks to {@link WaypointNavigator}'s looping, is the first
+	 * waypoint again once {@code current} is the last one in the group.
+	 */
+	private void drawNavigationPath(LevelRenderContext context, Vec3 camera, PoseStack.Pose pose, VertexConsumer buffer, Waypoint current) {
+		Vec3 origin = EspGeometry.nearCameraOrigin(camera, context.levelState().cameraRenderState.orientation, PATH_NEAR_OFFSET);
+		Vec3 currentCenter = Vec3.atCenterOf(current.pos());
+		int currentColor = EspGeometry.withOpacity(colorFor(current), 1.0f);
+		EspGeometry.edge(pose, buffer, (float) origin.x, (float) origin.y, (float) origin.z,
+				(float) currentCenter.x, (float) currentCenter.y, (float) currentCenter.z, currentColor, PATH_LINE_WIDTH);
+
+		navigator.next().ifPresent(next -> {
+			Vec3 nextCenter = Vec3.atCenterOf(next.pos());
+			int nextColor = EspGeometry.withOpacity(colorFor(next), 1.0f);
+			EspGeometry.edge(pose, buffer, (float) currentCenter.x, (float) currentCenter.y, (float) currentCenter.z,
+					(float) nextCenter.x, (float) nextCenter.y, (float) nextCenter.z, nextColor, PATH_LINE_WIDTH);
+		});
+	}
+
+	private void drawLabel(LevelRenderContext context, Vec3 camera, Waypoint waypoint) {
+		Vec3 labelPos = Vec3.atCenterOf(waypoint.pos()).add(0, 1.3, 0);
+		String text = "#" + waypoint.order() + " " + waypoint.type().label();
+		int color = colorFor(waypoint);
+
+		Font font = Minecraft.getInstance().font;
+		int textWidth = font.width(text);
+
+		PoseStack poseStack = context.poseStack();
+		poseStack.pushPose();
+		poseStack.translate(labelPos.x - camera.x, labelPos.y - camera.y, labelPos.z - camera.z);
+		poseStack.mulPose(context.levelState().cameraRenderState.orientation);
+		poseStack.scale(-TEXT_SCALE, -TEXT_SCALE, TEXT_SCALE);
+
+		Matrix4f matrix = poseStack.last().pose();
+		font.drawInBatch(text, -textWidth / 2f, 0, color, false, matrix, context.bufferSource(),
+				Font.DisplayMode.SEE_THROUGH, 0, FULL_BRIGHT);
+
+		poseStack.popPose();
+	}
+
+	private List<Waypoint> waypointsToRender() {
+		if (editorState.isEditing()) {
+			return store.get(editorState.editingGroupId()).map(WaypointGroup::waypoints).orElse(List.of());
+		}
+
+		return Stream.of(navigator.current(), navigator.next(), navigator.nextNext())
+				.flatMap(Optional::stream)
+				.toList();
+	}
+
+	private int colorFor(Waypoint waypoint) {
+		return switch (waypoint.type()) {
+			case PICKOBULUS -> config.waypointPickobulusColor();
+			case ETHERWARP -> config.waypointEtherwarpColor();
+		};
+	}
+}

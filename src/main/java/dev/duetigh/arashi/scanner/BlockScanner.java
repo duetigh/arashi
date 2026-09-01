@@ -1,7 +1,9 @@
 package dev.duetigh.arashi.scanner;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -23,10 +25,21 @@ import net.minecraft.world.level.chunk.LevelChunk;
  * never on a per-tick basis.
  */
 public final class BlockScanner {
+	// A block this common somewhere in the tracked set would otherwise blow up detectNewVeins()'s
+	// full re-cluster (see its javadoc) even at a throttled call rate - skip vein-announcement
+	// clustering for a block once it has this many loaded positions rather than pay that cost.
+	private static final int MAX_VEIN_DETECTION_POSITIONS = 5000;
+	// Caps how many already-loaded chunks get (re)scanned per processPendingRescans() call, so a
+	// bulk retrack (tracked-block set changed) spreads its cost over many ticks instead of scanning
+	// every loaded chunk synchronously in one call - which, at a large render distance, was enough
+	// to hang/crash the client.
+	private static final int RESCAN_CHUNKS_PER_BATCH = 8;
+
 	private final Map<ChunkPos, Map<BlockPos, Block>> matchesByChunk = new ConcurrentHashMap<>();
 	private final Map<ChunkPos, Map<Block, Integer>> countsByChunk = new ConcurrentHashMap<>();
 	private final Map<ChunkPos, LevelChunk> loadedChunks = new ConcurrentHashMap<>();
 	private final Map<Block, Set<BlockPos>> announcedPositions = new ConcurrentHashMap<>();
+	private final Deque<LevelChunk> pendingRescan = new ArrayDeque<>();
 	private volatile Set<Block> trackedBlocks = Set.of();
 	private volatile List<BlockPos> matchesSnapshot = List.of();
 	private volatile Map<BlockPos, Block> matchesWithBlocksSnapshot = Map.of();
@@ -54,7 +67,13 @@ public final class BlockScanner {
 
 		this.trackedBlocks = resolved;
 		announcedPositions.clear();
-		rescanAllLoaded();
+		// Matches for the old tracked set are stale the instant it changes - drop them now (rather
+		// than showing wrong ESP/tracking results) and let processPendingRescans() repopulate them
+		// for the new set a few chunks at a time.
+		matchesByChunk.clear();
+		countsByChunk.clear();
+		rebuildSnapshot();
+		queueRescanAllLoaded();
 	}
 
 	/** All chunks currently loaded client-side. There's no public API for this on {@code ClientChunkCache}, so callers that need it (e.g. seeding a scan with already-loaded chunks) piggyback on this bookkeeping. */
@@ -92,6 +111,7 @@ public final class BlockScanner {
 		matchesByChunk.clear();
 		countsByChunk.clear();
 		announcedPositions.clear();
+		pendingRescan.clear();
 		rebuildSnapshot();
 	}
 
@@ -147,15 +167,30 @@ public final class BlockScanner {
 		}
 	}
 
-	private void rescanAllLoaded() {
+	private void queueRescanAllLoaded() {
+		pendingRescan.clear();
+		pendingRescan.addAll(loadedChunks.values());
+	}
+
+	/**
+	 * Drains up to {@link #RESCAN_CHUNKS_PER_BATCH} chunks from the queue {@link #setTrackedBlockIds}
+	 * fills, actually performing their scans. Callers run this every tick so a bulk retrack across a
+	 * large render distance completes over a couple of seconds instead of freezing the client.
+	 */
+	public void processPendingRescans() {
 		ClientLevel level = currentLevel;
 
 		if (level == null) {
+			pendingRescan.clear();
 			return;
 		}
 
-		for (LevelChunk chunk : loadedChunks.values()) {
-			scanChunk(level, chunk);
+		for (int i = 0; i < RESCAN_CHUNKS_PER_BATCH && !pendingRescan.isEmpty(); i++) {
+			LevelChunk chunk = pendingRescan.poll();
+
+			if (loadedChunks.containsKey(chunk.getPos())) {
+				scanChunk(level, chunk);
+			}
 		}
 	}
 
@@ -201,7 +236,23 @@ public final class BlockScanner {
 		}
 
 		rebuildSnapshot();
-		detectNewVeins(level);
+	}
+
+	/**
+	 * Runs new-vein detection against whatever's currently loaded. Deliberately not called from
+	 * {@link #scanChunk} itself - that fires once per chunk load, and during the initial burst of a
+	 * world join that can mean hundreds of calls in a couple of seconds. Since detectNewVeins()
+	 * re-clusters the *entire* accumulated match set from scratch every time, doing that on every
+	 * single chunk load made tracking a common block (e.g. coal ore) freeze the client during world
+	 * join. Callers instead trigger this on a throttled cadence (see ArashiClient's incremental
+	 * rescan), which caps it to once per second regardless of how many chunks load in between.
+	 */
+	public void detectNewVeinsNow() {
+		ClientLevel level = currentLevel;
+
+		if (level != null) {
+			detectNewVeins(level);
+		}
 	}
 
 	/**
@@ -226,9 +277,17 @@ public final class BlockScanner {
 
 		for (Map.Entry<Block, Set<BlockPos>> entry : positionsByBlock.entrySet()) {
 			Block block = entry.getKey();
+			Set<BlockPos> positions = entry.getValue();
+
+			// A block this common (e.g. coal ore) isn't a useful "new vein" announcement anyway -
+			// skip it rather than re-clustering tens of thousands of positions every cycle.
+			if (positions.size() > MAX_VEIN_DETECTION_POSITIONS) {
+				continue;
+			}
+
 			Set<BlockPos> announced = announcedPositions.computeIfAbsent(block, b -> ConcurrentHashMap.newKeySet());
 
-			for (Set<BlockPos> cluster : VeinClusterer.cluster(entry.getValue())) {
+			for (Set<BlockPos> cluster : VeinClusterer.cluster(positions)) {
 				boolean isNew = cluster.stream().noneMatch(announced::contains);
 				announced.addAll(cluster);
 

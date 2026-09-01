@@ -7,15 +7,15 @@ import java.time.format.DateTimeFormatter;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.AbstractSelectionList;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
+import dev.duetigh.arashi.gui.theme.ArashiTheme;
+import dev.duetigh.arashi.gui.widget.ArashiButton;
+import dev.duetigh.arashi.gui.widget.ArashiListRow;
+import dev.duetigh.arashi.gui.widget.ArashiScrollPanel;
+import dev.duetigh.arashi.gui.widget.ArashiTextField;
 import dev.duetigh.arashi.scan.ScanController;
 import dev.duetigh.arashi.scan.ScanEntry;
 import dev.duetigh.arashi.scan.ScanStore;
@@ -25,92 +25,108 @@ import dev.duetigh.arashi.scan.ScanStore;
  * is locked to a banner pointing at {@link ScanSetupScreen} - the list/export/delete actions below
  * would otherwise operate on stale data (or race a scan that's still writing to disk).
  */
-public final class ScanBrowserScreen extends Screen {
-	private static final int ROW_HEIGHT = 36;
-	private static final int ACTION_ROW_Y_OFFSET = 24;
-	private static final int ACTION_WIDTH = 50;
+public final class ScanBrowserScreen extends ArashiScreen {
+	private static final int ROW_HEIGHT = 44;
+	private static final int NAME_ROW_HEIGHT = 18;
+	private static final int ACTION_HEIGHT = 16;
+	private static final int ACTION_GAP = 4;
 	private static final int ACTION_COUNT = 4;
 	private static final long SIZE_WARNING_BYTES = 300_000;
 	private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 			.withZone(ZoneId.systemDefault());
 
-	private final Screen parent;
 	private final ScanController controller;
 	private final ScanStore store;
 
-	private ScanList list;
+	private ArashiScrollPanel list;
 	private String renamingId;
-	private EditBox renameBox;
+	private ArashiTextField renameField;
 	private String statusMessage = "";
 
 	public ScanBrowserScreen(Screen parent, ScanController controller, ScanStore store) {
-		super(Component.literal("Arashi - Scans"));
-		this.parent = parent;
+		super(Component.literal("Arashi - Scans"), parent);
 		this.controller = controller;
 		this.store = store;
 	}
 
 	@Override
-	protected void init() {
+	protected void buildWidgets() {
 		if (controller.isActive()) {
-			initActiveScanBanner();
+			buildActiveScanBanner();
 		} else {
-			initScanList();
+			buildScanList();
 		}
 	}
 
 	/** Locked-out view while a scan is running: nothing here can touch the scan list until it's stopped. */
-	private void initActiveScanBanner() {
-		this.addRenderableWidget(Button.builder(Component.literal("Manage Running Scan"),
-						b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store)))
-				.pos(this.width / 2 - 100, this.height / 2 - 30)
-				.size(200, 20)
-				.build());
+	private void buildActiveScanBanner() {
+		ArashiButton manageButton = track(new ArashiButton("Manage Running Scan", ArashiButton.Style.PRIMARY,
+				b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store))));
+		manageButton.setBounds(this.width / 2 - 75, this.height / 2 - 30, 150, 20);
 
-		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-				.pos(this.width / 2 - 50, this.height - 26)
-				.size(100, 20)
-				.build());
+		ArashiButton doneButton = track(new ArashiButton("Done", ArashiButton.Style.SECONDARY, b -> onClose()));
+		doneButton.setBounds(this.width / 2 - 40, this.height - 26, 80, 20);
 	}
 
-	private void initScanList() {
-		this.addRenderableWidget(Button.builder(Component.literal("Make Scan"),
-						b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store)))
-				.pos(this.width / 2 - 100, 24)
-				.size(200, 20)
-				.build());
+	private void buildScanList() {
+		int margin = ArashiTheme.PADDING;
 
-		int listTop = 50;
+		ArashiButton makeScanButton = track(new ArashiButton("Make Scan", ArashiButton.Style.PRIMARY,
+				b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store))));
+		makeScanButton.setBounds(this.width / 2 - 75, 24, 150, 20);
+
+		int listTop = 54;
 
 		if (renamingId != null) {
-			listTop = 78;
-			renameBox = this.addRenderableWidget(new EditBox(this.font, this.width / 2 - 100, 50, 160, 20, Component.literal("Name")));
-			ScanEntry entry = findEntry(renamingId);
-			renameBox.setValue(entry != null ? entry.name() : "");
-			renameBox.setFocused(true);
+			listTop = 82;
+			renameField = track(new ArashiTextField(findEntryName(renamingId), v -> { }));
+			renameField.setBounds(this.width / 2 - 75, 54, 120, 20);
 
-			this.addRenderableWidget(Button.builder(Component.literal("OK"), b -> confirmRename())
-					.pos(this.width / 2 + 64, 50)
-					.size(36, 20)
-					.build());
+			ArashiButton okButton = track(new ArashiButton("OK", ArashiButton.Style.PRIMARY, b -> confirmRename()));
+			okButton.setBounds(this.width / 2 + 47, 54, 28, 20);
 		}
 
-		this.list = this.addRenderableOnly(new ScanList(this.minecraft, this.width, this.height - listTop - 32, listTop, ROW_HEIGHT));
-		this.addWidget(this.list);
-		refreshList();
+		list = track(new ArashiScrollPanel());
+		list.setBounds(margin, listTop, this.width - margin * 2, this.height - listTop - 32 - margin);
 
-		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-				.pos(this.width / 2 - 50, this.height - 26)
-				.size(100, 20)
-				.build());
+		ArashiButton doneButton = track(new ArashiButton("Done", ArashiButton.Style.SECONDARY, b -> onClose()));
+		doneButton.setBounds(this.width / 2 - 40, this.height - 26, 80, 20);
+
+		refreshList();
 	}
 
 	private void refreshList() {
 		list.clear();
+		int y = 0;
+		int listWidth = list.getWidth();
+		int actionWidth = (listWidth - ACTION_GAP * (ACTION_COUNT - 1)) / ACTION_COUNT;
 
 		for (ScanEntry entry : store.list()) {
-			list.addEntry(list.new ScanRow(entry));
+			String subtitle = entry.dimension().replace("minecraft:", "") + " * " + entry.chunkCount() + " chunks * "
+					+ formatSize(entry.byteSize()) + " * " + TIMESTAMP_FORMAT.format(Instant.ofEpochMilli(entry.timestampMillis()));
+
+			if (entry.byteSize() > SIZE_WARNING_BYTES) {
+				subtitle += " * large scan";
+			}
+
+			ArashiListRow row = new ArashiListRow(entry.name(), subtitle, null);
+			row.setSize(listWidth, NAME_ROW_HEIGHT);
+			list.add(row, 0, y);
+
+			int actionY = y + NAME_ROW_HEIGHT + 2;
+			addAction(actionWidth, 0, actionY, "Rename", () -> beginRename(entry.id()));
+			addAction(actionWidth, actionWidth + ACTION_GAP, actionY, "Export", () -> exportToFile(entry.id()));
+			addAction(actionWidth, (actionWidth + ACTION_GAP) * 2, actionY, "Bin", () -> exportBinaryToFile(entry.id()));
+			addAction(actionWidth, (actionWidth + ACTION_GAP) * 3, actionY, "Delete", () -> confirmDelete(entry));
+
+			y += ROW_HEIGHT;
 		}
+	}
+
+	private void addAction(int width, int relativeX, int relativeY, String label, Runnable action) {
+		ArashiButton button = new ArashiButton(label, ArashiButton.Style.SECONDARY, b -> action.run());
+		button.setSize(width, ACTION_HEIGHT);
+		list.add(button, relativeX, relativeY);
 	}
 
 	private void beginRename(String id) {
@@ -119,8 +135,8 @@ public final class ScanBrowserScreen extends Screen {
 	}
 
 	private void confirmRename() {
-		if (renamingId != null && renameBox != null) {
-			String newName = renameBox.getValue().strip();
+		if (renamingId != null && renameField != null) {
+			String newName = renameField.getValue().strip();
 
 			if (!newName.isEmpty()) {
 				store.rename(renamingId, newName);
@@ -131,8 +147,8 @@ public final class ScanBrowserScreen extends Screen {
 		this.rebuildWidgets();
 	}
 
-	private ScanEntry findEntry(String id) {
-		return store.list().stream().filter(e -> e.id().equals(id)).findFirst().orElse(null);
+	private String findEntryName(String id) {
+		return store.list().stream().filter(e -> e.id().equals(id)).findFirst().map(ScanEntry::name).orElse("");
 	}
 
 	private static String formatSize(long bytes) {
@@ -151,155 +167,48 @@ public final class ScanBrowserScreen extends Screen {
 		Minecraft.getInstance().keyboardHandler.setClipboard(path.toString());
 	}
 
+	private void exportToFile(String id) {
+		Path path = store.exportToFile(id);
+		copyPathToClipboard(path);
+		statusMessage = "Exported to " + path + " (path copied to clipboard).";
+	}
+
+	private void exportBinaryToFile(String id) {
+		Path path = store.exportBinaryToFile(id);
+		copyPathToClipboard(path);
+		statusMessage = "Exported binary to " + path + " (path copied to clipboard).";
+	}
+
+	private void confirmDelete(ScanEntry entry) {
+		this.minecraft.setScreen(new ConfirmScreen(confirmed -> {
+			if (confirmed) {
+				store.delete(entry.id());
+			}
+
+			this.minecraft.setScreen(this);
+
+			if (confirmed) {
+				refreshList();
+			}
+		}, Component.literal("Delete Scan"),
+				Component.literal("Are you sure you want to delete \"" + entry.name() + "\"? This cannot be undone.")));
+	}
+
 	@Override
-	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
-		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		graphics.text(this.font, this.title, this.width / 2 - this.font.width(this.title) / 2, 6, 0xFFFFFFFF, true);
+	public void extractRenderState(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float delta) {
+		super.extractRenderState(ctx, mouseX, mouseY, delta);
 
 		if (controller.isActive()) {
 			String status = "A scan is currently running (" + controller.activeChunkCount() + " chunks captured).";
 			String hint = "Manage it from the setup screen before browsing scans.";
-			graphics.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, this.height / 2 - 54, 0xFF55FF55, true);
-			graphics.text(this.font, Component.literal(hint), this.width / 2 - this.font.width(hint) / 2, this.height / 2 - 44, 0xFFAAAAAA, true);
+			ctx.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, this.height / 2 - 54, 0xFF55FF55, true);
+			ctx.text(this.font, Component.literal(hint), this.width / 2 - this.font.width(hint) / 2, this.height / 2 - 44, ArashiTheme.TEXT_SECONDARY, true);
 			return;
 		}
 
 		if (!statusMessage.isEmpty() && renamingId == null) {
 			String status = this.font.plainSubstrByWidth(statusMessage, this.width - 16);
-			graphics.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, 48, 0xFFAAAAAA, true);
-		}
-	}
-
-	@Override
-	public void onClose() {
-		this.minecraft.setScreen(parent);
-	}
-
-	private final class ScanList extends AbstractSelectionList<ScanList.ScanRow> {
-		ScanList(Minecraft client, int width, int height, int top, int itemHeight) {
-			super(client, width, height, top, itemHeight);
-		}
-
-		@Override
-		public int addEntry(ScanRow entry) {
-			return super.addEntry(entry);
-		}
-
-		void clear() {
-			this.clearEntries();
-		}
-
-		@Override
-		protected void updateWidgetNarration(NarrationElementOutput output) {
-		}
-
-		final class ScanRow extends AbstractSelectionList.Entry<ScanRow> {
-			private final ScanEntry entry;
-
-			ScanRow(ScanEntry entry) {
-				this.entry = entry;
-			}
-
-			@Override
-			public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float tickDelta) {
-				int x = getX();
-				int y = getY();
-				int width = getWidth();
-				int height = getHeight();
-
-				if (hovered) {
-					graphics.fill(x, y, x + width, y + height, 0x30FFFFFF);
-				}
-
-				String subtitle = entry.dimension().replace("minecraft:", "") + " * " + entry.chunkCount() + " chunks * "
-						+ formatSize(entry.byteSize()) + " * " + TIMESTAMP_FORMAT.format(Instant.ofEpochMilli(entry.timestampMillis()));
-
-				if (entry.byteSize() > SIZE_WARNING_BYTES) {
-					subtitle += " * large scan";
-				}
-
-				int availableWidth = width - 8;
-				String name = ScanBrowserScreen.this.font.plainSubstrByWidth(entry.name(), availableWidth);
-				subtitle = ScanBrowserScreen.this.font.plainSubstrByWidth(subtitle, availableWidth);
-				int subtitleColor = entry.byteSize() > SIZE_WARNING_BYTES ? 0xFFFFAA55 : 0xFFAAAAAA;
-
-				graphics.text(ScanBrowserScreen.this.font, Component.literal(name), x + 4, y + 2, 0xFFFFFFFF, false);
-				graphics.text(ScanBrowserScreen.this.font, Component.literal(subtitle), x + 4, y + 12, subtitleColor, false);
-
-				drawAction(graphics, actionX(0), y, "Rename", 0xFFFFFFFF);
-				drawAction(graphics, actionX(1), y, "Export", 0xFFFFFFFF);
-				drawAction(graphics, actionX(2), y, "Bin", 0xFFFFFFFF);
-				drawAction(graphics, actionX(3), y, "Delete", 0xFFFF5555);
-			}
-
-			private int actionX(int index) {
-				return getX() + getWidth() - ACTION_WIDTH * (ACTION_COUNT - index) - 4;
-			}
-
-			private void drawAction(GuiGraphicsExtractor graphics, int x, int y, String label, int color) {
-				graphics.text(ScanBrowserScreen.this.font, Component.literal(label), x, y + ACTION_ROW_Y_OFFSET, color, false);
-			}
-
-			@Override
-			public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-				int localX = (int) (event.x() - getX());
-				int localY = (int) (event.y() - getY());
-				int width = getWidth();
-
-				if (localY < ACTION_ROW_Y_OFFSET - 2) {
-					return true;
-				}
-
-				for (int i = 0; i < ACTION_COUNT; i++) {
-					int slotStart = width - ACTION_WIDTH * (ACTION_COUNT - i) - 4;
-					int slotEnd = slotStart + ACTION_WIDTH;
-
-					if (localX >= slotStart && localX < slotEnd) {
-						handleAction(i);
-						return true;
-					}
-				}
-
-				return true;
-			}
-
-			private void handleAction(int index) {
-				switch (index) {
-					case 0 -> beginRename(entry.id());
-					case 1 -> exportToFile();
-					case 2 -> exportBinaryToFile();
-					case 3 -> confirmDelete();
-					default -> {
-					}
-				}
-			}
-
-			private void exportToFile() {
-				Path path = store.exportToFile(entry.id());
-				copyPathToClipboard(path);
-				statusMessage = "Exported to " + path + " (path copied to clipboard).";
-			}
-
-			private void exportBinaryToFile() {
-				Path path = store.exportBinaryToFile(entry.id());
-				copyPathToClipboard(path);
-				statusMessage = "Exported binary to " + path + " (path copied to clipboard).";
-			}
-
-			private void confirmDelete() {
-				ScanBrowserScreen.this.minecraft.setScreen(new ConfirmScreen(confirmed -> {
-					if (confirmed) {
-						store.delete(entry.id());
-					}
-
-					ScanBrowserScreen.this.minecraft.setScreen(ScanBrowserScreen.this);
-
-					if (confirmed) {
-						refreshList();
-					}
-				}, Component.literal("Delete Scan"),
-						Component.literal("Are you sure you want to delete \"" + entry.name() + "\"? This cannot be undone.")));
-			}
+			ctx.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, 48, ArashiTheme.TEXT_SECONDARY, true);
 		}
 	}
 }

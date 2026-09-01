@@ -6,10 +6,6 @@ import java.util.Set;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.CycleButton;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -17,6 +13,12 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 
+import dev.duetigh.arashi.gui.theme.ArashiTheme;
+import dev.duetigh.arashi.gui.widget.ArashiBlockGrid;
+import dev.duetigh.arashi.gui.widget.ArashiButton;
+import dev.duetigh.arashi.gui.widget.ArashiSlider;
+import dev.duetigh.arashi.gui.widget.ArashiTabBar;
+import dev.duetigh.arashi.gui.widget.ArashiTextField;
 import dev.duetigh.arashi.scan.CaptureMode;
 import dev.duetigh.arashi.scan.CaptureParams;
 import dev.duetigh.arashi.scan.ScanController;
@@ -29,11 +31,10 @@ import dev.duetigh.arashi.scan.ScanStore;
  * this screen while a scan is active loads its actual live settings (rather than resetting to
  * defaults) so "Manage Running Scan" reflects what's really being captured.
  */
-public final class ScanSetupScreen extends Screen {
-	private static final int WIDGET_WIDTH = 200;
+public final class ScanSetupScreen extends ArashiScreen {
+	private static final int WIDGET_WIDTH = 150;
 	private static final int WIDGET_HEIGHT = 20;
 
-	private final Screen parent;
 	private final ScanController controller;
 	private final ScanStore store;
 	private final List<Identifier> allBlockIds;
@@ -47,12 +48,10 @@ public final class ScanSetupScreen extends Screen {
 	private String pickerQuery = "";
 	private String statusMessage = "";
 
-	private EditBox pickerSearchBox;
-	private BlockPickerGrid pickerGrid;
+	private ArashiBlockGrid pickerGrid;
 
 	public ScanSetupScreen(Screen parent, ScanController controller, ScanStore store) {
-		super(Component.literal("Arashi - Make Scan"));
-		this.parent = parent;
+		super(Component.literal("Arashi - Make Scan"), parent);
 		this.controller = controller;
 		this.store = store;
 		this.allBlockIds = BuiltInRegistries.BLOCK.stream()
@@ -83,58 +82,50 @@ public final class ScanSetupScreen extends Screen {
 	}
 
 	@Override
-	protected void init() {
+	protected void buildWidgets() {
 		boolean locked = controller.isActive();
 		int x = this.width / 2 - WIDGET_WIDTH / 2;
 		int y = 24;
 
-		this.addRenderableWidget(Button.builder(startStopLabel(), b -> toggleScan())
-				.pos(x, y)
-				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
-				.build());
+		ArashiButton startStopButton = track(new ArashiButton(this::startStopLabel, ArashiButton.Style.PRIMARY, b -> toggleScan()));
+		startStopButton.setBounds(x, y, WIDGET_WIDTH, WIDGET_HEIGHT);
 		y += 24;
 
 		Minecraft client = Minecraft.getInstance();
 		int worldMinY = client.level != null ? client.level.getMinY() : pendingMinY;
 		int worldMaxY = client.level != null ? client.level.getMaxY() : pendingMaxY;
 
-		AbstractWidget minYSlider = this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT,
-				yToSlider(pendingMinY, worldMinY, worldMaxY),
-				value -> Component.literal("Y Min: " + pendingMinY),
+		ArashiSlider minYSlider = track(new ArashiSlider(yToSlider(pendingMinY, worldMinY, worldMaxY),
+				value -> "Y Min: " + pendingMinY,
 				value -> {
 					pendingMinY = sliderToY(value, worldMinY, worldMaxY);
 					pendingMaxY = Math.max(pendingMaxY, pendingMinY);
 				}));
-		minYSlider.active = !locked;
+		minYSlider.setBounds(x, y, WIDGET_WIDTH, WIDGET_HEIGHT);
+		minYSlider.setEnabled(!locked);
 		y += 24;
 
-		AbstractWidget maxYSlider = this.addRenderableWidget(new ValueSlider(x, y, WIDGET_WIDTH, WIDGET_HEIGHT,
-				yToSlider(pendingMaxY, worldMinY, worldMaxY),
-				value -> Component.literal("Y Max: " + pendingMaxY),
+		ArashiSlider maxYSlider = track(new ArashiSlider(yToSlider(pendingMaxY, worldMinY, worldMaxY),
+				value -> "Y Max: " + pendingMaxY,
 				value -> {
 					pendingMaxY = sliderToY(value, worldMinY, worldMaxY);
 					pendingMinY = Math.min(pendingMinY, pendingMaxY);
 				}));
-		maxYSlider.active = !locked;
+		maxYSlider.setBounds(x, y, WIDGET_WIDTH, WIDGET_HEIGHT);
+		maxYSlider.setEnabled(!locked);
 		y += 24;
 
-		CycleButton<CaptureMode> modeButton = this.addRenderableWidget(CycleButton.builder(
-						(CaptureMode mode) -> Component.literal("Mode: " + modeLabel(mode)), pendingMode)
-				.withValues(CaptureMode.values())
-				.displayOnlyValue()
-				.create(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, Component.empty(), (button, mode) -> {
-					pendingMode = mode;
-					this.rebuildWidgets();
-				}));
-		modeButton.active = !locked;
+		ArashiTabBar modeTabs = track(new ArashiTabBar(List.of("Everything", "Specific Block(s)", "Isolate"), pendingMode.ordinal(), index -> {
+			pendingMode = CaptureMode.values()[index];
+			this.rebuildWidgets();
+		}));
+		modeTabs.setBounds(x, y, WIDGET_WIDTH, WIDGET_HEIGHT);
 		y += 24;
 
 		if (pendingMode == CaptureMode.ISOLATE) {
-			CycleButton<Integer> connectivityButton = this.addRenderableWidget(CycleButton.builder(
-							(Integer c) -> Component.literal(c + "-connectivity"), isolateConnectivity)
-					.withValues(6, 26)
-					.create(x, y, WIDGET_WIDTH, WIDGET_HEIGHT, Component.empty(), (button, c) -> isolateConnectivity = c));
-			connectivityButton.active = !locked;
+			ArashiTabBar connectivityTabs = track(new ArashiTabBar(List.of("6-connectivity", "26-connectivity"),
+					isolateConnectivity == 26 ? 1 : 0, index -> isolateConnectivity = index == 1 ? 26 : 6));
+			connectivityTabs.setBounds(x, y, WIDGET_WIDTH, WIDGET_HEIGHT);
 			y += 24;
 		}
 
@@ -142,23 +133,20 @@ public final class ScanSetupScreen extends Screen {
 			buildPicker(y);
 		}
 
-		this.addRenderableWidget(Button.builder(Component.literal("Done"), b -> this.onClose())
-				.pos(x, this.height - 26)
-				.size(WIDGET_WIDTH, WIDGET_HEIGHT)
-				.build());
+		ArashiButton doneButton = track(new ArashiButton("Done", ArashiButton.Style.SECONDARY, b -> onClose()));
+		doneButton.setBounds(x, this.height - 26, WIDGET_WIDTH, WIDGET_HEIGHT);
 	}
 
 	private void buildPicker(int top) {
-		this.pickerSearchBox = this.addRenderableWidget(new EditBox(this.font, this.width / 2 - WIDGET_WIDTH / 2, top, WIDGET_WIDTH, 20, Component.literal("Search")));
-		this.pickerSearchBox.setValue(pickerQuery);
-		this.pickerSearchBox.setResponder(query -> {
+		ArashiTextField searchField = track(new ArashiTextField(pickerQuery, query -> {
 			pickerQuery = query;
 			refreshPicker();
-		});
+		}));
+		searchField.setBounds(this.width / 2 - WIDGET_WIDTH / 2, top, WIDGET_WIDTH, 20);
 
-		this.pickerGrid = this.addRenderableOnly(new BlockPickerGrid(this.minecraft, this.width, this.height - top - 44, top + 24,
-				this::isPickerSelected, id -> false, this::onPickerClick));
-		this.addWidget(this.pickerGrid);
+		pickerGrid = track(new ArashiBlockGrid(this::isPickerSelected, id -> false, this::onPickerClick));
+		pickerGrid.setBounds(0, top + 24, this.width, this.height - top - 24 - 44);
+
 		refreshPicker();
 	}
 
@@ -218,16 +206,8 @@ public final class ScanSetupScreen extends Screen {
 		return blocks;
 	}
 
-	private Component startStopLabel() {
-		return Component.literal(controller.isActive() ? "Stop Scan (saves)" : "Start Scan");
-	}
-
-	private static String modeLabel(CaptureMode mode) {
-		return switch (mode) {
-			case EVERYTHING -> "Everything";
-			case WHITELIST -> "Specific Block(s)";
-			case ISOLATE -> "Isolate";
-		};
+	private String startStopLabel() {
+		return controller.isActive() ? "Stop Scan (saves)" : "Start Scan";
 	}
 
 	private static double yToSlider(int y, int minY, int maxY) {
@@ -239,20 +219,14 @@ public final class ScanSetupScreen extends Screen {
 	}
 
 	@Override
-	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
-		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		graphics.text(this.font, this.title, this.width / 2 - this.font.width(this.title) / 2, 6, 0xFFFFFFFF, true);
+	public void extractRenderState(GuiGraphicsExtractor ctx, int mouseX, int mouseY, float delta) {
+		super.extractRenderState(ctx, mouseX, mouseY, delta);
 
 		if (controller.isActive()) {
 			String status = "Scanning... " + controller.activeChunkCount() + " chunks captured";
-			graphics.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, this.height - 46, 0xFF55FF55, true);
+			ctx.text(this.font, Component.literal(status), this.width / 2 - this.font.width(status) / 2, this.height - 46, 0xFF55FF55, true);
 		} else if (!statusMessage.isEmpty()) {
-			graphics.text(this.font, Component.literal(statusMessage), this.width / 2 - this.font.width(statusMessage) / 2, this.height - 46, 0xFFAAAAAA, true);
+			ctx.text(this.font, Component.literal(statusMessage), this.width / 2 - this.font.width(statusMessage) / 2, this.height - 46, ArashiTheme.TEXT_SECONDARY, true);
 		}
-	}
-
-	@Override
-	public void onClose() {
-		this.minecraft.setScreen(parent);
 	}
 }

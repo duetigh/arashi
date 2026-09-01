@@ -76,6 +76,34 @@ public final class ArashiConfig {
 		data.espMode = mode.name();
 	}
 
+	public ScanMode scanMode() {
+		try {
+			return ScanMode.valueOf(data.scanMode);
+		} catch (IllegalArgumentException e) {
+			return ScanMode.MULTI;
+		}
+	}
+
+	public void setScanMode(ScanMode mode) {
+		data.scanMode = mode.name();
+	}
+
+	/** Replaces the tracked block set with exactly this one block, used when switching to/staying in tracking mode. */
+	public void setSingleTrackedBlockId(String blockId) {
+		data.trackedBlockIds.clear();
+		data.trackedBlockIds.add(blockId);
+		save();
+	}
+
+	/** In tracking mode, whether the box ESP still renders on all matches alongside the crosshair-to-vein line. */
+	public boolean trackingShowBoxEsp() {
+		return data.trackingShowBoxEsp;
+	}
+
+	public void setTrackingShowBoxEsp(boolean enabled) {
+		data.trackingShowBoxEsp = enabled;
+	}
+
 	/** Outline color for a tracked block, packed as 0xRRGGBB. Falls back to the default color if the block has no override. */
 	public int outlineColorFor(String blockId) {
 		BlockColor override = data.blockColors.get(blockId);
@@ -169,6 +197,49 @@ public final class ArashiConfig {
 		data.partyServerUrl = url;
 	}
 
+	public boolean autoChestEnabled() {
+		return data.autoChestEnabled;
+	}
+
+	public void setAutoChestEnabled(boolean enabled) {
+		data.autoChestEnabled = enabled;
+	}
+
+	/** Marker/outline color for Pickobulus waypoints, packed as 0xRRGGBB. */
+	public int waypointPickobulusColor() {
+		return data.waypointPickobulusColor;
+	}
+
+	public void setWaypointPickobulusColor(int rgb) {
+		data.waypointPickobulusColor = rgb & 0xFFFFFF;
+	}
+
+	/** Marker/outline color for Etherwarp waypoints, packed as 0xRRGGBB. */
+	public int waypointEtherwarpColor() {
+		return data.waypointEtherwarpColor;
+	}
+
+	public void setWaypointEtherwarpColor(int rgb) {
+		data.waypointEtherwarpColor = rgb & 0xFFFFFF;
+	}
+
+	public boolean waypointFloatingTextEnabled() {
+		return data.waypointFloatingTextEnabled;
+	}
+
+	public void setWaypointFloatingTextEnabled(boolean enabled) {
+		data.waypointFloatingTextEnabled = enabled;
+	}
+
+	/** Id of the {@code WaypointGroup} currently used for runtime navigation, or {@code null} if none is active. */
+	public String activeWaypointGroupId() {
+		return data.activeWaypointGroupId;
+	}
+
+	public void setActiveWaypointGroupId(String groupId) {
+		data.activeWaypointGroupId = groupId;
+	}
+
 	public void save() {
 		try {
 			Files.createDirectories(PATH.getParent());
@@ -184,6 +255,8 @@ public final class ArashiConfig {
 	private static final class Data {
 		Set<String> trackedBlockIds = new LinkedHashSet<>();
 		String espMode = EspMode.BOTH.name();
+		String scanMode = ScanMode.MULTI.name();
+		boolean trackingShowBoxEsp = false;
 		int outlineColor = 0xFF0000;
 		int fillColor = 0xFF3333;
 		float outlineWidth = 2.0f;
@@ -195,6 +268,11 @@ public final class ArashiConfig {
 		boolean lobbySearchedTextEnabled = true;
 		String partyServerUrl = "";
 		Map<String, BlockColor> blockColors = new LinkedHashMap<>();
+		boolean autoChestEnabled = false;
+		int waypointPickobulusColor = 0x55C8FF;
+		int waypointEtherwarpColor = 0xB266FF;
+		boolean waypointFloatingTextEnabled = true;
+		String activeWaypointGroupId = null;
 	}
 
 	/** Per-block outline/fill color override, packed as 0xRRGGBB. */
