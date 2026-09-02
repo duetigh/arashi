@@ -4,14 +4,14 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import org.joml.Matrix4f;
-
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.network.chat.Style;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -70,21 +70,20 @@ public final class WaypointRenderer {
 		}
 
 		Vec3 camera = context.levelState().cameraRenderState.pos;
-		MultiBufferSource.BufferSource bufferSource = context.bufferSource();
+		SubmitNodeCollector collector = context.submitNodeCollector();
 		PoseStack poseStack = context.poseStack();
 		poseStack.pushPose();
 		poseStack.translate(-camera.x, -camera.y, -camera.z);
-		PoseStack.Pose pose = poseStack.last();
 
-		VertexConsumer outlineBuffer = bufferSource.getBuffer(EspRenderTypes.LINES);
+		collector.submitCustomGeometry(poseStack, EspRenderTypes.LINES, (PoseStack.Pose pose, VertexConsumer outlineBuffer) -> {
+			for (Waypoint waypoint : toRender) {
+				int color = EspGeometry.withOpacity(colorFor(waypoint), 1.0f);
+				AABB box = new AABB(waypoint.pos());
+				EspGeometry.drawLineBox(pose, outlineBuffer, box, color, LINE_WIDTH);
+			}
 
-		for (Waypoint waypoint : toRender) {
-			int color = EspGeometry.withOpacity(colorFor(waypoint), 1.0f);
-			AABB box = new AABB(waypoint.pos());
-			EspGeometry.drawLineBox(pose, outlineBuffer, box, color, LINE_WIDTH);
-		}
-
-		current.ifPresent(waypoint -> drawNavigationPath(context, camera, pose, outlineBuffer, waypoint));
+			current.ifPresent(waypoint -> drawNavigationPath(context, camera, pose, outlineBuffer, waypoint));
+		});
 
 		poseStack.popPose();
 
@@ -123,6 +122,7 @@ public final class WaypointRenderer {
 
 		Font font = Minecraft.getInstance().font;
 		int textWidth = font.width(text);
+		FormattedCharSequence sequence = FormattedCharSequence.forward(text, Style.EMPTY);
 
 		PoseStack poseStack = context.poseStack();
 		poseStack.pushPose();
@@ -130,9 +130,8 @@ public final class WaypointRenderer {
 		poseStack.mulPose(context.levelState().cameraRenderState.orientation);
 		poseStack.scale(-TEXT_SCALE, -TEXT_SCALE, TEXT_SCALE);
 
-		Matrix4f matrix = poseStack.last().pose();
-		font.drawInBatch(text, -textWidth / 2f, 0, color, false, matrix, context.bufferSource(),
-				Font.DisplayMode.SEE_THROUGH, 0, FULL_BRIGHT);
+		context.submitNodeCollector().submitText(poseStack, -textWidth / 2f, 0, sequence, false,
+				Font.DisplayMode.SEE_THROUGH, FULL_BRIGHT, color, 0, 0);
 
 		poseStack.popPose();
 	}

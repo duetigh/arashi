@@ -10,7 +10,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
@@ -19,6 +19,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import dev.duetigh.arashi.ArashiClient;
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.config.EspMode;
 import dev.duetigh.arashi.config.ScanMode;
@@ -43,6 +44,10 @@ public final class EspRenderer {
 	private final ArashiConfig config;
 	private final Map<Block, TextureAtlasSprite> spriteCache = new HashMap<>();
 	private final Map<Block, String> blockIdCache = new HashMap<>();
+	// TexturedEspPipeline hand-builds a RenderPipeline through an API that some Minecraft versions
+	// don't ship (see its javadoc) - once that's confirmed missing on this game version, stop
+	// retrying every frame and stay silent instead of logging the same warning repeatedly.
+	private boolean texturedEspUnavailable = false;
 
 	public EspRenderer(BlockScanner scanner, ArashiConfig config) {
 		this.scanner = scanner;
@@ -96,11 +101,10 @@ public final class EspRenderer {
 			candidates = candidates.subList(0, MAX_RENDERED_BOXES);
 		}
 
-		MultiBufferSource.BufferSource bufferSource = context.bufferSource();
+		SubmitNodeCollector collector = context.submitNodeCollector();
 		PoseStack poseStack = context.poseStack();
 		poseStack.pushPose();
 		poseStack.translate(-camera.x, -camera.y, -camera.z);
-		PoseStack.Pose pose = poseStack.last();
 
 		// visible is computed once (with each box's face-exposure against same-type neighbors) and
 		// reused across the passes below, so frustum culling and the 6 adjacency lookups only run
@@ -115,36 +119,46 @@ public final class EspRenderer {
 			}
 		}
 
-		// Each RenderType's buffer is fully drained before the next one is even requested - holding
-		// several different buffers open at once and interleaving writes across them is exactly what
-		// crashed with "Not building!" from BufferBuilder once other world-space renderers (tracking
-		// mode's line, waypoint markers) started sharing the same bufferSource within the same frame.
+		// Each RenderType's geometry is submitted as its own callback rather than interleaving writes
+		// to several buffers at once - holding several different buffers open at once and interleaving
+		// writes across them is exactly what crashed with "Not building!" from BufferBuilder once other
+		// world-space renderers (tracking mode's line, waypoint markers) started sharing the same
+		// bufferSource within the same frame, and the submit-node model keeps that same one-buffer-at-a-
+		// time discipline.
 		if (drawColorFill) {
-			VertexConsumer fillBuffer = bufferSource.getBuffer(EspRenderTypes.FILLED_BOX);
-
-			for (VisibleBox box : visible) {
-				String blockId = idFor(box.block);
-				EspGeometry.drawFilledBox(pose, fillBuffer, new AABB(box.pos),
-						EspGeometry.withOpacity(config.fillColorFor(blockId), fillOpacity), box.exposed);
-			}
+			collector.submitCustomGeometry(poseStack, EspRenderTypes.FILLED_BOX, (PoseStack.Pose fillPose, VertexConsumer fillBuffer) -> {
+				for (VisibleBox box : visible) {
+					String blockId = idFor(box.block);
+					EspGeometry.drawFilledBox(fillPose, fillBuffer, new AABB(box.pos),
+							EspGeometry.withOpacity(config.fillColorFor(blockId), fillOpacity), box.exposed);
+				}
+			});
 		}
 
-		if (drawTextureFill) {
-			VertexConsumer textureBuffer = bufferSource.getBuffer(EspRenderTypes.TEXTURED_BOX);
-
-			for (VisibleBox box : visible) {
-				EspGeometry.drawTexturedBox(pose, textureBuffer, new AABB(box.pos), spriteFor(box.block), textureTint, box.exposed);
+		if (drawTextureFill && !texturedEspUnavailable) {
+			try {
+				collector.submitCustomGeometry(poseStack, TexturedEspPipeline.TEXTURED_BOX, (PoseStack.Pose texturePose, VertexConsumer textureBuffer) -> {
+					for (VisibleBox box : visible) {
+						EspGeometry.drawTexturedBox(texturePose, textureBuffer, new AABB(box.pos), spriteFor(box.block), textureTint, box.exposed);
+					}
+				});
+			} catch (LinkageError e) {
+				// TexturedEspPipeline references a RenderPipeline.Builder API this Minecraft version
+				// doesn't ship (see its javadoc) - fall back to no texture fill rather than crash the
+				// whole renderer the way an unguarded reference to it would.
+				texturedEspUnavailable = true;
+				ArashiClient.LOGGER.warn("Arashi: textured ESP fill isn't supported on this Minecraft version, disabling it", e);
 			}
 		}
 
 		if (drawOutline) {
-			VertexConsumer outlineBuffer = bufferSource.getBuffer(EspRenderTypes.LINES);
-
-			for (VisibleBox box : visible) {
-				String blockId = idFor(box.block);
-				EspGeometry.drawLineBox(pose, outlineBuffer, new AABB(box.pos),
-						EspGeometry.withOpacity(config.outlineColorFor(blockId), outlineOpacity), outlineWidth, box.exposed);
-			}
+			collector.submitCustomGeometry(poseStack, EspRenderTypes.LINES, (PoseStack.Pose outlinePose, VertexConsumer outlineBuffer) -> {
+				for (VisibleBox box : visible) {
+					String blockId = idFor(box.block);
+					EspGeometry.drawLineBox(outlinePose, outlineBuffer, new AABB(box.pos),
+							EspGeometry.withOpacity(config.outlineColorFor(blockId), outlineOpacity), outlineWidth, box.exposed);
+				}
+			});
 		}
 
 		poseStack.popPose();

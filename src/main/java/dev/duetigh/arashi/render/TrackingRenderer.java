@@ -3,7 +3,7 @@ package dev.duetigh.arashi.render;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
-import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 
@@ -66,15 +66,15 @@ public final class TrackingRenderer {
 
 		Vec3 origin = EspGeometry.nearCameraOrigin(camera, context.levelState().cameraRenderState.orientation, NEAR_OFFSET);
 
-		MultiBufferSource.BufferSource bufferSource = context.bufferSource();
+		SubmitNodeCollector collector = context.submitNodeCollector();
 		PoseStack poseStack = context.poseStack();
 		poseStack.pushPose();
 		poseStack.translate(-camera.x, -camera.y, -camera.z);
-		PoseStack.Pose pose = poseStack.last();
 
-		VertexConsumer buffer = bufferSource.getBuffer(EspRenderTypes.LINES);
-		EspGeometry.edge(pose, buffer, (float) origin.x, (float) origin.y, (float) origin.z,
-				(float) targetCenter.x, (float) targetCenter.y, (float) targetCenter.z, lineColor(), LINE_WIDTH);
+		collector.submitCustomGeometry(poseStack, EspRenderTypes.LINES, (PoseStack.Pose pose, VertexConsumer buffer) -> {
+			EspGeometry.edge(pose, buffer, (float) origin.x, (float) origin.y, (float) origin.z,
+					(float) targetCenter.x, (float) targetCenter.y, (float) targetCenter.z, lineColor(), LINE_WIDTH);
+		});
 
 		poseStack.popPose();
 	}
