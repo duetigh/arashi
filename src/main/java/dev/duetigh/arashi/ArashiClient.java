@@ -39,6 +39,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 
 import dev.duetigh.arashi.automation.AutoChestHandler;
+import dev.duetigh.arashi.compat.McCompat;
 import dev.duetigh.arashi.config.ArashiConfig;
 import dev.duetigh.arashi.config.ScanMode;
 import dev.duetigh.arashi.gui.BlockSelectScreen;
@@ -181,7 +182,7 @@ public final class ArashiClient implements ClientModInitializer {
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (openScannerKey.consumeClick()) {
-				client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore,
+				client.setScreenAndShow(new BlockSelectScreen(config, scanner, scanController, scanStore,
 						waypointStore, waypointEditorState,
 						openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey, copyLastCoordsKey));
 			}
@@ -196,7 +197,7 @@ public final class ArashiClient implements ClientModInitializer {
 			}
 
 			while (openScanBrowserKey.consumeClick()) {
-				client.setScreen(new ScanBrowserScreen(client.screen, scanController, scanStore));
+				client.setScreenAndShow(new ScanBrowserScreen(McCompat.currentScreen(client), scanController, scanStore));
 			}
 
 			while (copyLastCoordsKey.consumeClick()) {
@@ -204,7 +205,7 @@ public final class ArashiClient implements ClientModInitializer {
 			}
 
 			while (openWaypointManagerKey.consumeClick()) {
-				client.setScreen(new WaypointManagerScreen(client.screen, config, waypointStore, waypointEditorState));
+				client.setScreenAndShow(new WaypointManagerScreen(McCompat.currentScreen(client), config, waypointStore, waypointEditorState));
 			}
 		});
 	}
@@ -345,7 +346,7 @@ public final class ArashiClient implements ClientModInitializer {
 				ClientCommands.literal("arashi")
 						.executes(context -> {
 							Minecraft client = Minecraft.getInstance();
-							client.execute(() -> client.setScreen(new BlockSelectScreen(config, scanner, scanController, scanStore,
+							client.execute(() -> client.setScreenAndShow(new BlockSelectScreen(config, scanner, scanController, scanStore,
 									waypointStore, waypointEditorState,
 									openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey, copyLastCoordsKey)));
 							return 1;
@@ -361,7 +362,7 @@ public final class ArashiClient implements ClientModInitializer {
 						.then(ClientCommands.literal("scan")
 								.executes(context -> {
 									Minecraft client = Minecraft.getInstance();
-									client.execute(() -> client.setScreen(new ScanBrowserScreen(client.screen, scanController, scanStore)));
+									client.execute(() -> client.setScreenAndShow(new ScanBrowserScreen(McCompat.currentScreen(client), scanController, scanStore)));
 									return 1;
 								})
 								.then(ClientCommands.literal("start").executes(context -> {
@@ -375,7 +376,7 @@ public final class ArashiClient implements ClientModInitializer {
 						.then(ClientCommands.literal("party")
 								.executes(context -> {
 									Minecraft client = Minecraft.getInstance();
-									client.execute(() -> client.setScreen(new PartyScreen(party)));
+									client.execute(() -> client.setScreenAndShow(new PartyScreen(party)));
 									return 1;
 								})
 								.then(ClientCommands.literal("accept")
@@ -393,8 +394,8 @@ public final class ArashiClient implements ClientModInitializer {
 						.then(ClientCommands.literal("waypoint")
 								.executes(context -> {
 									Minecraft client = Minecraft.getInstance();
-									client.execute(() -> client.setScreen(
-											new WaypointManagerScreen(client.screen, config, waypointStore, waypointEditorState)));
+									client.execute(() -> client.setScreenAndShow(
+											new WaypointManagerScreen(McCompat.currentScreen(client), config, waypointStore, waypointEditorState)));
 									return 1;
 								})
 								.then(ClientCommands.literal("new")

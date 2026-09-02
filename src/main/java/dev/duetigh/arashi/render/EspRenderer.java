@@ -15,6 +15,8 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.gizmos.GizmoStyle;
+import net.minecraft.gizmos.Gizmos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -29,9 +31,29 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 
 /**
  * Draws a translucent box, textured box, and/or wireframe outline over every tracked block
- * position. Uses depth-test-disabled render types (see {@link EspRenderTypes}) so boxes stay
- * visible through terrain instead of being occluded like normal world geometry - that's the
- * point of an ESP.
+ * position, so boxes stay visible through terrain instead of being occluded like normal world
+ * geometry - that's the point of an ESP.
+ *
+ * <p>The wireframe outline goes through the vanilla Gizmos API ({@code net.minecraft.gizmos},
+ * with {@code setAlwaysOnTop()} for the see-through-terrain effect) - the same system F3+B
+ * hitboxes use - since it takes absolute world coordinates and lets vanilla apply the
+ * camera-relative transform at its own, verified-correct cadence. The translucent fill and
+ * textured modes below still go through the older hand-rolled SubmitNodeCollector pipeline (see
+ * {@link EspRenderTypes}, {@link TexturedEspPipeline}) because this Minecraft version's Gizmos API
+ * has no depth-test-disabled *filled* primitive - only wireframe lines support
+ * {@code setAlwaysOnTop()} (confirmed by decompiling {@code CuboidGizmo}/{@code RenderPipelines}:
+ * every filled-quad gizmo pipeline hard-codes a real depth test with no public override).
+ *
+ * <p>OVERLAY/BOTH fill used to visibly lag behind the camera during fast movement: submission was
+ * registered on {@code AFTER_TRANSLUCENT_TERRAIN}, which - per {@code LevelRenderEvents}' own
+ * javadoc - fires after this frame's solid/translucent feature submissions have already been
+ * drawn, so a {@code submitCustomGeometry} call made there missed that draw pass and only got
+ * drawn a frame late, by which point the camera position already baked into its vertices (baked
+ * immediately on submit - confirmed by decompiling {@code CustomFeatureRenderer.Storage.add}) was
+ * stale by however far the camera moved in that frame. Registering on {@code COLLECT_SUBMITS}
+ * instead (see {@link #register()}) submits in time for the same frame's own draw pass. OUTLINE
+ * mode was never affected since Gizmos store absolute world coordinates and apply the camera
+ * transform fresh at actual draw time, regardless of when they were collected.
  */
 public final class EspRenderer {
 	// A block this common (e.g. coal ore) can produce far more matches within render distance than
@@ -54,8 +76,14 @@ public final class EspRenderer {
 		this.config = config;
 	}
 
+	// COLLECT_SUBMITS, not AFTER_TRANSLUCENT_TERRAIN: submitCustomGeometry() bakes the current
+	// camera position into vertices immediately, and Fabric only draws that submission during the
+	// same frame's solid/translucent feature passes, which run *before* AFTER_TRANSLUCENT_TERRAIN
+	// fires - submitting there missed this frame's pass and got drawn a frame late, which is exactly
+	// what the previous fill/texture camera lag during fast movement was (see git history for the
+	// investigation into it).
 	public void register() {
-		LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(this::render);
+		LevelRenderEvents.COLLECT_SUBMITS.register(this::render);
 	}
 
 	private void render(LevelRenderContext context) {
@@ -82,11 +110,6 @@ public final class EspRenderer {
 		int renderDistanceBlocks = client.options.renderDistance().get() * 16;
 		double renderDistanceSq = (double) renderDistanceBlocks * renderDistanceBlocks;
 		Vec3 camera = context.levelState().cameraRenderState.pos;
-		Frustum frustum = context.levelState().cameraRenderState.cullFrustum;
-		float fillOpacity = config.fillOpacity();
-		float outlineOpacity = config.outlineOpacity();
-		int textureTint = EspGeometry.withOpacity(0xFFFFFF, fillOpacity);
-		float outlineWidth = config.outlineWidth();
 
 		List<Map.Entry<BlockPos, Block>> candidates = new ArrayList<>(matches.size());
 
@@ -101,14 +124,37 @@ public final class EspRenderer {
 			candidates = candidates.subList(0, MAX_RENDERED_BOXES);
 		}
 
-		SubmitNodeCollector collector = context.submitNodeCollector();
-		PoseStack poseStack = context.poseStack();
-		poseStack.pushPose();
-		poseStack.translate(-camera.x, -camera.y, -camera.z);
+		if (drawOutline) {
+			renderOutlineGizmos(candidates);
+		}
+
+		if (drawColorFill || (drawTextureFill && !texturedEspUnavailable)) {
+			renderFillOrTexture(context, matches, candidates, camera, drawColorFill, drawTextureFill);
+		}
+	}
+
+	private void renderOutlineGizmos(List<Map.Entry<BlockPos, Block>> candidates) {
+		float outlineOpacity = config.outlineOpacity();
+		float outlineWidth = config.outlineWidth();
+
+		try (var scope = Minecraft.getInstance().collectPerTickGizmos()) {
+			for (Map.Entry<BlockPos, Block> entry : candidates) {
+				String blockId = idFor(entry.getValue());
+				int color = EspGeometry.withOpacity(config.outlineColorFor(blockId), outlineOpacity);
+				Gizmos.cuboid(entry.getKey(), GizmoStyle.stroke(color, outlineWidth)).setAlwaysOnTop();
+			}
+		}
+	}
+
+	private void renderFillOrTexture(LevelRenderContext context, Map<BlockPos, Block> matches,
+			List<Map.Entry<BlockPos, Block>> candidates, Vec3 camera, boolean drawColorFill, boolean drawTextureFill) {
+		float fillOpacity = config.fillOpacity();
+		int textureTint = EspGeometry.withOpacity(0xFFFFFF, fillOpacity);
+		Frustum frustum = context.levelState().cameraRenderState.cullFrustum;
 
 		// visible is computed once (with each box's face-exposure against same-type neighbors) and
 		// reused across the passes below, so frustum culling and the 6 adjacency lookups only run
-		// once per candidate no matter how many of fill/texture/outline are active.
+		// once per candidate no matter how many of fill/texture are active.
 		List<VisibleBox> visible = new ArrayList<>(candidates.size());
 
 		for (Map.Entry<BlockPos, Block> entry : candidates) {
@@ -119,12 +165,11 @@ public final class EspRenderer {
 			}
 		}
 
-		// Each RenderType's geometry is submitted as its own callback rather than interleaving writes
-		// to several buffers at once - holding several different buffers open at once and interleaving
-		// writes across them is exactly what crashed with "Not building!" from BufferBuilder once other
-		// world-space renderers (tracking mode's line, waypoint markers) started sharing the same
-		// bufferSource within the same frame, and the submit-node model keeps that same one-buffer-at-a-
-		// time discipline.
+		SubmitNodeCollector collector = context.submitNodeCollector();
+		PoseStack poseStack = context.poseStack();
+		poseStack.pushPose();
+		poseStack.translate(-camera.x, -camera.y, -camera.z);
+
 		if (drawColorFill) {
 			collector.submitCustomGeometry(poseStack, EspRenderTypes.FILLED_BOX, (PoseStack.Pose fillPose, VertexConsumer fillBuffer) -> {
 				for (VisibleBox box : visible) {
@@ -135,7 +180,7 @@ public final class EspRenderer {
 			});
 		}
 
-		if (drawTextureFill && !texturedEspUnavailable) {
+		if (drawTextureFill) {
 			try {
 				collector.submitCustomGeometry(poseStack, TexturedEspPipeline.TEXTURED_BOX, (PoseStack.Pose texturePose, VertexConsumer textureBuffer) -> {
 					for (VisibleBox box : visible) {
@@ -149,16 +194,6 @@ public final class EspRenderer {
 				texturedEspUnavailable = true;
 				ArashiClient.LOGGER.warn("Arashi: textured ESP fill isn't supported on this Minecraft version, disabling it", e);
 			}
-		}
-
-		if (drawOutline) {
-			collector.submitCustomGeometry(poseStack, EspRenderTypes.LINES, (PoseStack.Pose outlinePose, VertexConsumer outlineBuffer) -> {
-				for (VisibleBox box : visible) {
-					String blockId = idFor(box.block);
-					EspGeometry.drawLineBox(outlinePose, outlineBuffer, new AABB(box.pos),
-							EspGeometry.withOpacity(config.outlineColorFor(blockId), outlineOpacity), outlineWidth, box.exposed);
-				}
-			});
 		}
 
 		poseStack.popPose();

@@ -61,7 +61,7 @@ public final class ScanBrowserScreen extends ArashiScreen {
 	/** Locked-out view while a scan is running: nothing here can touch the scan list until it's stopped. */
 	private void buildActiveScanBanner() {
 		ArashiButton manageButton = track(new ArashiButton("Manage Running Scan", ArashiButton.Style.PRIMARY,
-				b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store))));
+				b -> this.minecraft.setScreenAndShow(new ScanSetupScreen(this, controller, store))));
 		manageButton.setBounds(this.width / 2 - 75, this.height / 2 - 30, 150, 20);
 
 		ArashiButton doneButton = track(new ArashiButton("Done", ArashiButton.Style.SECONDARY, b -> onClose()));
@@ -72,7 +72,7 @@ public final class ScanBrowserScreen extends ArashiScreen {
 		int margin = ArashiTheme.PADDING;
 
 		ArashiButton makeScanButton = track(new ArashiButton("Make Scan", ArashiButton.Style.PRIMARY,
-				b -> this.minecraft.setScreen(new ScanSetupScreen(this, controller, store))));
+				b -> this.minecraft.setScreenAndShow(new ScanSetupScreen(this, controller, store))));
 		makeScanButton.setBounds(this.width / 2 - 75, 24, 150, 20);
 
 		int listTop = 54;
@@ -180,12 +180,12 @@ public final class ScanBrowserScreen extends ArashiScreen {
 	}
 
 	private void confirmDelete(ScanEntry entry) {
-		this.minecraft.setScreen(new ConfirmScreen(confirmed -> {
+		this.minecraft.setScreenAndShow(new ConfirmScreen(confirmed -> {
 			if (confirmed) {
 				store.delete(entry.id());
 			}
 
-			this.minecraft.setScreen(this);
+			this.minecraft.setScreenAndShow(this);
 
 			if (confirmed) {
 				refreshList();

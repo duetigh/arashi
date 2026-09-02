@@ -145,7 +145,7 @@ public final class BlockSelectScreen extends ArashiScreen {
 		int gap = ArashiTheme.GAP;
 		int startX = this.width / 2 - (buttonWidth * 5 + gap * 4) / 2;
 
-		ArashiButton settingsButton = track(new ArashiButton("Settings", ArashiButton.Style.SECONDARY, b -> this.minecraft.setScreen(
+		ArashiButton settingsButton = track(new ArashiButton("Settings", ArashiButton.Style.SECONDARY, b -> this.minecraft.setScreenAndShow(
 				new ArashiSettingsScreen(config, openScannerKey, toggleEspKey, toggleScanKey, openScanBrowserKey, copyLastCoordsKey))));
 		settingsButton.setBounds(startX, bottomY, buttonWidth, 20);
 
@@ -154,11 +154,11 @@ public final class BlockSelectScreen extends ArashiScreen {
 		debugButton.setBounds(startX + buttonWidth + gap, bottomY, buttonWidth, 20);
 
 		ArashiButton scansButton = track(new ArashiButton("Scans", ArashiButton.Style.SECONDARY,
-				b -> this.minecraft.setScreen(new ScanBrowserScreen(this, scanController, scanStore))));
+				b -> this.minecraft.setScreenAndShow(new ScanBrowserScreen(this, scanController, scanStore))));
 		scansButton.setBounds(startX + (buttonWidth + gap) * 2, bottomY, buttonWidth, 20);
 
 		ArashiButton waypointsButton = track(new ArashiButton("Waypoints", ArashiButton.Style.SECONDARY,
-				b -> this.minecraft.setScreen(new WaypointManagerScreen(this, config, waypointStore, waypointEditorState))));
+				b -> this.minecraft.setScreenAndShow(new WaypointManagerScreen(this, config, waypointStore, waypointEditorState))));
 		waypointsButton.setBounds(startX + (buttonWidth + gap) * 3, bottomY, buttonWidth, 20);
 
 		ArashiButton doneButton = track(new ArashiButton("Done", ArashiButton.Style.SECONDARY, b -> onClose()));

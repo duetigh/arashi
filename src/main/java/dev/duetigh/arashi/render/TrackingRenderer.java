@@ -17,6 +17,14 @@ import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
  * In tracking mode, draws a single line from the camera (i.e. the crosshair) to the center of
  * the nearest vein of the tracked block, using the same depth-test-disabled line pipeline as
  * {@link EspRenderer} so it reads through terrain like the rest of the ESP.
+ *
+ * <p>This used to visibly lag behind the camera during fast movement for the same reason
+ * {@link EspRenderer}'s fill did - see its javadoc and {@link #register()} - fixed by submitting
+ * from {@code COLLECT_SUBMITS} instead of {@code AFTER_TRANSLUCENT_TERRAIN}. It was also briefly
+ * ported to the vanilla Gizmos API to fix the lag a different way, but Gizmos submitted every
+ * render frame get drained less often than that (looks tick-scoped, not frame-scoped), so the
+ * line rendered duplicated several times over per tick instead - reverted back to this
+ * SubmitNodeCollector approach rather than chase a tick-scoped submission path.
  */
 public final class TrackingRenderer {
 	private static final float LINE_WIDTH = 2.0f;
@@ -42,8 +50,11 @@ public final class TrackingRenderer {
 		this.config = config;
 	}
 
+	// COLLECT_SUBMITS, not AFTER_TRANSLUCENT_TERRAIN - see EspRenderer.register() for why: submitting
+	// this late missed the frame's own solid-feature draw pass and rendered a frame behind, which was
+	// the camera lag during fast movement described in this class's javadoc above.
 	public void register() {
-		LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(this::render);
+		LevelRenderEvents.COLLECT_SUBMITS.register(this::render);
 	}
 
 	private void render(LevelRenderContext context) {
